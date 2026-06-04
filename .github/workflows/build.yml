@@ -1,4 +1,4 @@
-herename: Build GGUF ZeroCopy APK
+name: Build GGUF ZeroCopy APK
 
 on:
   push:
