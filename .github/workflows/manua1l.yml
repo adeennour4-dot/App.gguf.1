@@ -1,4 +1,4 @@
-herename: Unzip File
+name: Unzip File
 
 on:
   push:
