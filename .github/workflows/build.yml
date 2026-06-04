@@ -42,7 +42,6 @@ jobs:
           NDK_GLSLC="$ANDROID_SDK_ROOT/ndk/28.2.13676358/shader-tools/linux-x86_64/glslc"
           if [ -f "$NDK_GLSLC" ]; then
             sudo ln -sf "$NDK_GLSLC" /usr/local/bin/glslc
-            echo "Using NDK glslc: $(glslc --version)"
           else
             sudo apt-get install -y glslang-tools shaderc || true
           fi
@@ -68,11 +67,24 @@ jobs:
           restore-keys: |
             llama-cpp-${{ runner.os }}-
 
-      - name: Fix gradlew
+      - name: Write clean gradlew
         run: |
-          dos2unix gradlew
+          cat > gradlew << 'GRADLEW_EOF'
+          #!/usr/bin/env sh
+          APP_HOME="$(cd "$(dirname "$0")" && pwd)"
+          CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+          if [ -n "$JAVA_HOME" ]; then
+            JAVACMD="$JAVA_HOME/bin/java"
+          else
+            JAVACMD="java"
+          fi
+          exec "$JAVACMD" \
+            -classpath "$CLASSPATH" \
+            org.gradle.wrapper.GradleWrapperMain "$@"
+          GRADLEW_EOF
           chmod +x gradlew
-          head -1 gradlew
+          head -3 gradlew
+          sh -n gradlew && echo "gradlew syntax OK"
 
       - name: Build Debug APK
         run: |
