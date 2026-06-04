@@ -1,4 +1,4 @@
-name: Unzip File
+herename: Unzip File
 
 on:
   push:
@@ -13,8 +13,8 @@ jobs:
 
     - name: Unzip the file
       run: |
-        unzip -o your-file.zip -d extracted-folder/
-        rm your-file.zip
+        unzip -o GGUF-ZeroCopy-v3.zip -d extracted-folder/
+        rm GGUF-ZeroCopy-v3.zip
 
     - name: Commit and Push changes
       run: |
@@ -23,4 +23,3 @@ jobs:
         git add .
         git commit -m "Automated unzip from GitHub Actions" || exit 0
         git push
-
