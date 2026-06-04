@@ -1,0 +1,19 @@
+# Android build outputs
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# NDK / CMake intermediate files
+app/.cxx/
+app/build/
+
+# Gradle wrapper jar (commit the properties file but not the jar)
+gradle/wrapper/gradle-wrapper.jar
