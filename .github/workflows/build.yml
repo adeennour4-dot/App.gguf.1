@@ -20,7 +20,6 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: gradle
 
       - name: Install missing tools
         run: |
@@ -76,22 +75,16 @@ jobs:
           restore-keys: |
             llama-cpp-${{ runner.os }}-
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.5.1"
-
       - name: Build Debug APK
         run: |
-          gradle assembleDebug \
+          export PATH="$ANDROID_SDK_ROOT/ndk/28.2.13676358/shader-tools/linux-x86_64:$PATH"
+          ./gradlew assembleDebug \
             --no-daemon \
             --stacktrace \
-            -Pandroid.ndkVersion=28.2.13676358 \
-            -Porg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=512m"
+            -Pandroid.ndkVersion=28.2.13676358
         env:
           ANDROID_NDK: ${{ env.ANDROID_NDK }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          PATH: ${{ env.ANDROID_SDK_ROOT }}/ndk/28.2.13676358/shader-tools/linux-x86_64:${{ env.PATH }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
