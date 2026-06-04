@@ -64,11 +64,10 @@ jobs:
           restore-keys: |
             llama-cpp-${{ runner.os }}-
 
-      - name: Fix gradlew line endings
-        run: sed -i 's/\r//' gradlew
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Replace gradlew with clean copy
+        run: |
+          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradlew -o gradlew
+          chmod +x gradlew
 
       - name: Build Debug APK
         run: |
