@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.gguf.ipc">
+
+    <!--
+        Storage permissions:
+          - READ_EXTERNAL_STORAGE  : Android 9–12 (API 28–32)
+          - READ_MEDIA_*           : Android 13+ (API 33+)
+        The file picker (ACTION_OPEN_DOCUMENT) works without these on modern Android,
+        but we declare them for direct path access fallbacks.
+    -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- GGUF models are treated as "documents" in the media store -->
+
+    <!-- Vulkan feature declaration — devices without Vulkan will see a warning in Play Store -->
+    <uses-feature android:name="android.hardware.vulkan.level" android:required="false" />
+    <uses-feature android:name="android.hardware.vulkan.version"
+        android:version="0x00401000"
+        android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Zero-Copy GGUF Engine"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true">
+
+        <!--
+            android:process=":app" spawns this Activity in a private sub-process.
+            The inference JNI calls happen in the same process via coroutines (IO dispatcher),
+            which is sufficient isolation from the main UI thread while avoiding the
+            complexity of true multi-process Binder IPC.
+
+            If you want TRUE multi-process isolation, you would need a bound Service
+            with process=":inference" and pass the SharedMemory fd via Binder.
+            That architecture is described in the README but is omitted here for
+            build simplicity.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
