@@ -22,6 +22,11 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Install system tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y findutils coreutils dos2unix
+
       - name: Install Android NDK 28 and CMake
         run: |
           echo "y" | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
@@ -39,7 +44,6 @@ jobs:
             sudo ln -sf "$NDK_GLSLC" /usr/local/bin/glslc
             echo "Using NDK glslc: $(glslc --version)"
           else
-            sudo apt-get update -qq
             sudo apt-get install -y glslang-tools shaderc || true
           fi
           which glslc && glslc --version
@@ -64,10 +68,11 @@ jobs:
           restore-keys: |
             llama-cpp-${{ runner.os }}-
 
-      - name: Replace gradlew with clean copy
+      - name: Fix gradlew
         run: |
-          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradlew -o gradlew
+          dos2unix gradlew
           chmod +x gradlew
+          head -1 gradlew
 
       - name: Build Debug APK
         run: |
