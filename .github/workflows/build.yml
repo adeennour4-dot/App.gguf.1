@@ -18,6 +18,7 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -29,11 +30,23 @@ jobs:
             "build-tools;36.0.0" \
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
 
       - name: Write local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "ndk.dir=$ANDROID_HOME/ndk/28.2.13676358" >> local.properties
 
-      - name: Cache Gradle dependencies
+      - name: Cache CMake deps (llama.cpp + Vulkan-Headers)
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/.cxx
+            app/build/_deps
+          key: cmake-deps-b9487-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
+          restore-keys: cmake-deps-b9487-
+
+      - name: Cache Gradle wrapper + caches
         uses: actions/cache@v4
         with:
           path: |
@@ -42,18 +55,13 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      - name: Cache llama.cpp build
-        uses: actions/cache@v4
-        with:
-          path: app/.cxx
-          key: llama-cpp-b9487-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
-          restore-keys: llama-cpp-b9487-
-
       - name: Make gradlew executable
         run: chmod +x gradlew
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
