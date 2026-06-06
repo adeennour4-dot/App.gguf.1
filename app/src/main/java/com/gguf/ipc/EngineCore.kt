@@ -40,7 +40,7 @@ object EngineCore {
 
     external fun setEngineConfigNative(
         nCtx: Int, maxNewTokens: Int, temperature: Float,
-        topP: Float, minP: Float, nGpuLayers: Int, seed: Int
+        topP: Float, minP: Float, nGpuLayers: Int, nThreads: Int, seed: Int
     )
     external fun setSystemPromptNative(prompt: String)
     external fun resetContextNative()
@@ -76,6 +76,7 @@ object EngineCore {
         val topP: Float        = 0.9f,
         val minP: Float        = 0.05f,
         val nGpuLayers: Int    = 99,
+        val nThreads: Int      = 4,
         val seed: Int          = -1
     )
 
@@ -89,7 +90,7 @@ object EngineCore {
         setEngineConfigNative(
             cfg.nCtx, cfg.maxNewTokens,
             cfg.temperature, cfg.topP, cfg.minP,
-            cfg.nGpuLayers, cfg.seed
+            cfg.nGpuLayers, cfg.nThreads, cfg.seed
         )
     }
 
@@ -108,6 +109,7 @@ object EngineCore {
         try {
             val pfd    = ParcelFileDescriptor.fromFd(nativeFd)
             val dupPfd = pfd.dup()
+            pfd.close()  // close original wrapper — C++ still owns nativeFd
             sharedMemory = SharedMemory.fromFileDescriptor(dupPfd)
             dupPfd.close()
             readBuffer = sharedMemory!!.mapReadOnly().apply { order(ByteOrder.LITTLE_ENDIAN) }

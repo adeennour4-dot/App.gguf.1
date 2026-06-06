@@ -139,6 +139,7 @@ fun GgufEngineScreen() {
     var topPStr        by remember { mutableStateOf("0.9") }
     var minPStr        by remember { mutableStateOf("0.05") }
     var gpuLayersStr   by remember { mutableStateOf("99") }
+    var nThreadsStr    by remember { mutableStateOf("4") }
     var repeatPenStr   by remember { mutableStateOf("1.1") }
     var freqPenStr     by remember { mutableStateOf("0.0") }
     var presPenStr     by remember { mutableStateOf("0.0") }
@@ -156,6 +157,7 @@ fun GgufEngineScreen() {
             topP         = topPStr.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.9f,
             minP         = minPStr.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.05f,
             nGpuLayers   = gpuLayersStr.toIntOrNull()?.coerceIn(0, 999) ?: 99,
+            nThreads     = nThreadsStr.toIntOrNull()?.coerceIn(1, 16) ?: 4,
             seed         = -1
         )
         EngineCore.setEngineConfig(cfg)
@@ -308,6 +310,7 @@ fun GgufEngineScreen() {
                 topPStr, { topPStr = it },
                 minPStr, { minPStr = it },
                 gpuLayersStr, { gpuLayersStr = it },
+                nThreadsStr, { nThreadsStr = it },
                 repeatPenStr, { repeatPenStr = it },
                 freqPenStr, { freqPenStr = it },
                 presPenStr, { presPenStr = it },
@@ -664,6 +667,7 @@ fun SettingsTab(
     topPStr: String,       onTopPChange: (String) -> Unit,
     minPStr: String,       onMinPChange: (String) -> Unit,
     gpuLayersStr: String,  onGpuLayersChange: (String) -> Unit,
+    nThreadsStr: String,   onNThreadsChange: (String) -> Unit,
     repeatPenStr: String,  onRepeatPenChange: (String) -> Unit,
     freqPenStr: String,    onFreqPenChange: (String) -> Unit,
     presPenStr: String,    onPresPenChange: (String) -> Unit,
@@ -682,6 +686,7 @@ fun SettingsTab(
             SettingRow("Context Window (n_ctx)", "512–32768. 8192 is safe for 6–8 GB RAM.",  nCtxStr, onNCtxChange)
             SettingRow("Max New Tokens",          "Tokens per turn (64–8192).",               maxTokensStr, onMaxTokensChange)
             SettingRow("GPU Layers",              "99 = all on Vulkan GPU. 0 = CPU-only.",   gpuLayersStr, onGpuLayersChange)
+            SettingRow("CPU Threads",              "Threads for CPU ops (1–16). 4 is safe.",  nThreadsStr, onNThreadsChange)
         }
         SettingsSection("Sampling") {
             SettingRow("Temperature",  "0 = deterministic, 1.0 = creative.",   tempStr, onTempChange)

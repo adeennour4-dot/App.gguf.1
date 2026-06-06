@@ -146,13 +146,14 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_setEngineConfigNative(
         JNIEnv*, jobject,
         jint nCtx, jint maxNewTokens, jfloat temp,
-        jfloat topP, jfloat minP, jint nGpuLayers, jint seed) {
+        jfloat topP, jfloat minP, jint nGpuLayers, jint nThreads, jint seed) {
     g_cfg.n_ctx          = nCtx;
     g_cfg.max_new_tokens = maxNewTokens;
     g_cfg.temperature    = temp;
     g_cfg.top_p          = topP;
     g_cfg.min_p          = minP;
     g_cfg.n_gpu_layers   = nGpuLayers;
+    g_cfg.n_threads      = (nThreads > 0) ? nThreads : 4;
     g_cfg.seed           = (seed < 0) ? LLAMA_DEFAULT_SEED : (uint32_t)seed;
 }
 
@@ -166,6 +167,7 @@ Java_com_gguf_ipc_EngineCore_setRepeatPenaltyNative(
     g_cfg.repeat_penalty = repeatPenalty;
     g_cfg.freq_penalty   = freqPenalty;
     g_cfg.pres_penalty   = presPenalty;
+    if (g_ctx) rebuild_sampler(); // Apply immediately without model reload
 }
 
 // ---------------------------------------------------------------------------
@@ -412,10 +414,11 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
     int n_ctx_used = llama_get_kv_cache_used_cells(g_ctx);
     if (n_ctx_used + n_toks >= g_cfg.n_ctx) {
         int keep = g_cfg.n_ctx / 4;
-        // Remove middle tokens: keep system prefix, discard the oldest half
-        llama_kv_cache_seq_rm(g_ctx, 0, keep, n_ctx_used - keep);
-        // Shift remaining tokens down so positions are contiguous
-        llama_kv_cache_seq_add(g_ctx, 0, n_ctx_used - keep, -1, -(n_ctx_used - keep - keep));
+        // Standard context shift: keep first `keep` tokens (system prefix),
+        // remove the oldest half of the remaining context, shift tail down.
+        int n_discard = (n_ctx_used - keep) / 2;
+        llama_kv_cache_seq_rm (g_ctx, 0, keep, keep + n_discard);
+        llama_kv_cache_seq_add(g_ctx, 0, keep + n_discard, n_ctx_used, -n_discard);
         LOGI("KV-cache context shift applied.");
     }
 
@@ -435,7 +438,7 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
         if (llama_vocab_is_eog(llama_model_get_vocab(g_model), tok)) break;
 
         // Piece to string
-        char piece[32];
+        char piece[256];
         int n = llama_token_to_piece(llama_model_get_vocab(g_model), tok, piece, sizeof(piece), 0, false);
         if (n > 0) {
             piece[n] = '\0';
