@@ -21,7 +21,6 @@ android {
                 cFlags  ("-O3 -flto -march=armv8.4a+dotprod")
                 arguments(
                     "-DANDROID_STL=c++_shared",
-                    "-DGGML_VULKAN=ON",
                     "-DGGML_OPENMP=OFF",
                     "-DGGML_LLAMAFILE=OFF",
                     "-DLLAMA_BUILD_TESTS=OFF",

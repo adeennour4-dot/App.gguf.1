@@ -215,7 +215,7 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     cparams.n_ctx           = g_cfg.n_ctx;
     cparams.n_batch         = g_cfg.n_batch;
     cparams.n_threads       = g_cfg.n_threads;
-    cparams.flash_attn      = true;
+
 
     g_ctx = llama_new_context_with_model(g_model, cparams);
     if (!g_ctx) { llama_model_free(g_model); g_model = nullptr; LOGE("Failed to create context"); return JNI_FALSE; }
