@@ -13,30 +13,19 @@ android {
         minSdk        = 27
         targetSdk     = 36
         versionCode   = 5
-        versionName   = "5.0-PRO"
+        versionName   = "5.0-ULTRA"
 
         externalNativeBuild {
             cmake {
-                // EXTREME OPTIMIZATION: ThinLTO + Vectorization
-                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector")
-                arguments(
-                    "-DANDROID_STL=c++_shared",
-                    "-DGGML_VULKAN=ON",
-                    "-DGGML_VULKAN_MEMORY_MODEL=2", // Optimized Vulkan memory
-                    "-DGGML_OPENMP=OFF"
-                )
+                // High-performance CPU flags for S23 FE
+                cppFlags("-std=c++17 -O3 -mfloat-abi=softfp -mfpu=neon-vfpv4")
+                arguments("-DANDROID_STL=c++_shared", "-DGGML_OPENMP=OFF", "-DGGML_VULKAN=OFF")
                 abiFilters += "arm64-v8a"
             }
         }
     }
-
     buildFeatures { compose = true }
-    
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
-
-    packaging {
-        jniLibs { useLegacyPackaging = true } // Better for Zero-Copy memory mapping
-    }
 }
 
 dependencies {
@@ -46,5 +35,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
+    
+    // CRITICAL: This library provides Theme.Material3.DayNight.NoActionBar
+    implementation("com.google.android.material:material:1.12.0")
 }
