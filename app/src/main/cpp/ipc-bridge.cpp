@@ -1,4 +1,3 @@
-
 #include <jni.h>
 #include <android/sharedmem.h>
 #include <sys/mman.h>
@@ -27,7 +26,7 @@ static std::atomic<bool> g_abort{false};
 extern "C" {
 
 JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_initializeSharedMemoryNative(JNIEnv*, jobject) {
-    int fd = ASharedMemory_create("gguf_pro_shm", sizeof(SharedBuffer));
+    int fd = ASharedMemory_create("gguf_ultra_shm", sizeof(SharedBuffer));
     if (fd < 0) return -1;
     g_buf = (SharedBuffer*)mmap(NULL, sizeof(SharedBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     memset(g_buf, 0, sizeof(SharedBuffer));
@@ -48,6 +47,7 @@ JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIE
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = 4096;
     g_ctx = llama_init_from_model(g_model, cparams);
+    
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.7f));
     return JNI_TRUE;
@@ -62,6 +62,7 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNI
     std::vector<llama_token> tokens(8192);
     int n_toks = llama_tokenize(vocab, input, strlen(input), tokens.data(), 8192, true, false);
 
+    // Prompt evaluation
     for (int i = 0; i < n_toks; i += 512) {
         int n_eval = std::min(512, n_toks - i);
         llama_decode(g_ctx, llama_batch_get_one(&tokens[i], n_eval));
