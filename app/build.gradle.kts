@@ -17,8 +17,8 @@ android {
 
         externalNativeBuild {
             cmake {
-                // Optimized 64-bit flags (Compatible with S23 FE / ARM64)
-                cppFlags("-std=c++17 -O3 -flto=thin -fno-stack-protector")
+                // Corrected 64-bit flags for S23 FE
+                cppFlags("-std=c++17 -O3 -fno-stack-protector")
                 arguments("-DANDROID_STL=c++_shared", "-DGGML_OPENMP=OFF", "-DGGML_VULKAN=OFF")
                 abiFilters += "arm64-v8a"
             }
