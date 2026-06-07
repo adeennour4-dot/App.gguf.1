@@ -1,3 +1,4 @@
+
 package com.gguf.ipc
 
 import android.os.Bundle
@@ -12,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
@@ -19,10 +21,14 @@ import kotlinx.coroutines.*
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Initialize the Native Engine
         EngineCore.bootZeroCopyEngine()
+        
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF00F2FF))) {
-                ProScreen()
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF05070A)) {
+                    ProScreen()
+                }
             }
         }
     }
@@ -30,43 +36,61 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun ProScreen() {
-    var output by remember { mutableStateOf("Ready for Command...") }
+    val coroutineScope = rememberCoroutineScope()
+    var output by remember { mutableStateOf("System Ready. Awaiting Command...") }
     var input by remember { mutableStateOf("") }
-    var tps by remember { mutableStateOf(0f) }
-    var kv by remember { mutableIntOf(0) }
+    var tps by remember { mutableFloatStateOf(0f) }
+    var kvUsage by remember { mutableIntStateOf(0) }
     var isRunning by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isRunning) {
+    // Unified polling loop for UI updates
+    LaunchedEffect(Unit) {
         while (true) {
-            delay(100)
+            delay(120) // Polling frequency
             output = EngineCore.readPartialStream()
             tps = EngineCore.getTpsScaled()
-            kv = EngineCore.getKvCacheUsageNative()
-            if (isRunning && EngineCore.isInferenceDone()) isRunning = false
+            kvUsage = EngineCore.getKvCacheUsageNative()
+            
+            // Check if inference finished to reset the button state
+            if (isRunning && EngineCore.isInferenceDone()) {
+                isRunning = false
+            }
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF05070A)).padding(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        // Header with Telemetry
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("GGUF V5 PRO", color = Color(0xFF00F2FF), fontSize = 20.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.weight(1f))
-            Text("${"%.1f".format(tps)} TPS", color = Color(0xFF00F2FF), fontSize = 12.sp)
+            Column(Modifier.weight(1f)) {
+                Text("GGUF V5 PRO", color = Color(0xFF00F2FF), fontSize = 20.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Text("VULKAN/DOTPROD ACCELERATED", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            }
+            // TPS Badge
+            Surface(color = Color(0xFF00F2FF).copy(0.1f), border = BorderStroke(1.dp, Color(0xFF00F2FF)), shape = RoundedCornerShape(4.dp)) {
+                Text("${"%.1f".format(tps)} TPS", color = Color(0xFF00F2FF), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+            }
         }
         
-        LinearProgressIndicator(progress = { kv / 100f }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), color = Color(0xFF00F2FF))
-
-        Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF10141D), RoundedCornerShape(12.dp)).padding(16.dp).verticalScroll(rememberScrollState())) {
-            Text(output, color = Color.White, fontSize = 14.sp)
-        }
-
-        OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Enter Prompt", color = Color.Gray) })
+        Spacer(Modifier.height(12.dp))
         
-        Button(
-            onClick = { isRunning = true; CoroutineScope(Dispatchers.IO).launch { EngineCore.executeZeroCopyInference(input) } },
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00F2FF))
-        ) {
-            Text("EXECUTE", color = Color.Black)
+        // KV Cache Progress
+        Text("KV-CACHE FILL: $kvUsage%", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        LinearProgressIndicator(progress = { kvUsage / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp), color = Color(0xFF00F2FF), trackColor = Color(0xFF10141D))
+
+        // Glassmorphic Terminal Output
+        Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)
+            .background(Color(0xFF10141D), RoundedCornerShape(12.dp))
+            .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp))
+            .padding(16.dp).verticalScroll(rememberScrollState())) {
+            Text(output, color = Color.White, fontSize = 15.sp, lineHeight = 22.sp)
         }
-    }
-}
+
+        // Cyberpunk Input Area
+        OutlinedTextField(
+            value = input, onValueChange = { input = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Enter prompt...", color = Color.DarkGray) },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFF00F2FF),
+                unfocusedBorderColor = Color(0xFF1E293B),
+                focuse
