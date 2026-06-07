@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GGUFZeroCopyV4" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <style name="Theme.Material3.Dark" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Modern System Bar Colors -->
+        <item name="android:statusBarColor">#020408</item>
+        <item name="android:navigationBarColor">#020408</item>
+    </style>
 </resources>
