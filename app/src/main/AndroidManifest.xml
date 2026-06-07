@@ -1,14 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_foreground"
-        android:label="GGUF Ultra PRO"
-        android:roundIcon="@drawable/ic_launcher_foreground"
-        android:supportsRtl="true"
+        android:label="GGUF Terminal"
         android:theme="@style/Theme.Material3.Dark">
-        
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -18,7 +14,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
     </application>
-
 </manifest>
