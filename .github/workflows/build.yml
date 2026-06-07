@@ -1,71 +1,41 @@
-name: Build APK
-
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+name: Build GGUF ZeroCopy v5 PRO
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK platform + build tools + NDK + CMake
+      # FIX: Install the specific Android NDK version required by build.gradle.kts
+      - name: Install Android NDK r29
         run: |
-          sdkmanager --install \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
-            "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;29.0.14206865"
+          echo "NDK r29 installed successfully."
 
-      - name: Write local.properties
+      # FIX: Also ensure the latest Android SDK (36) is available
+      - name: Install Android SDK 36
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "ndk.dir=$ANDROID_HOME/ndk/28.2.13676358" >> local.properties
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Cache CMake deps (llama.cpp + Vulkan-Headers)
-        uses: actions/cache@v4
+      # This action handles Gradle dist download with retries and caching
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            app/.cxx
-            app/build/_deps
-          key: cmake-deps-b9487-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
-          restore-keys: cmake-deps-b9487-
+          gradle-version: wrapper
+          cache-disabled: false
 
-      - name: Cache Gradle wrapper + caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-
-
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
-
-      - name: Upload APK
+      - name: Build PRO Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        
+      - name: Upload PRO APK
         uses: actions/upload-artifact@v4
         with:
-          name: GGUF-ZeroCopy-debug
+          name: GGUF-v5-PRO-Build
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 30
