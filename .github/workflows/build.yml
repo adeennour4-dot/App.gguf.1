@@ -13,24 +13,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # FIX: Install the specific Android NDK version required by build.gradle.kts
+      # STEP 1: Make the wrapper executable (CRITICAL)
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
+
+      # STEP 2: Install the specific Android NDK r29
       - name: Install Android NDK r29
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;29.0.14206865"
-          echo "NDK r29 installed successfully."
+          echo "NDK r29 installed."
 
-      # FIX: Also ensure the latest Android SDK (36) is available
+      # STEP 3: Install Android SDK 36
       - name: Install Android SDK 36
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
 
-      # This action handles Gradle dist download with retries and caching
+      # STEP 4: Setup Gradle (Handles caching and download)
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: wrapper
           cache-disabled: false
 
+      # STEP 5: Run the build
       - name: Build PRO Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
         
