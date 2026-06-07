@@ -1,152 +1,79 @@
-# GGUF ZeroCopy Engine — v4
+GGUF ZeroCopy v5 PRO
+On-Device Inference, Re-engineered.
 
-A production-grade Android app for local GGUF model inference.
+GGUF ZeroCopy is a high-performance, production-ready inference engine for Android. Using a zero-copy shared memory architecture, it delivers real-time LLM responses with minimal latency and maximum hardware utilization.
+🚀 What’s New in v5 PRO
 
-## What's new in v4 vs v3
+    ⚡ Extreme Performance: Upgraded to llama.cpp b9542 with LLVM ThinLTO and DotProd acceleration.
 
-| Feature | v3 | v4 |
-|---|---|---|
-| UI | Single-screen | **Tabbed: Chat / Settings / Info / Bench** |
-| Message display | Single response box | **Chat bubbles with timestamps + t/s** |
-| Stop inference | ❌ | **✅ Abort button (mid-stream cancel)** |
-| Benchmark | ❌ | **✅ PP/TG speed test (tokens/sec)** |
-| Model info | ❌ | **✅ arch, params, vocab, context length** |
-| Copy chat | ❌ | **✅ Export full conversation** |
-| Repeat penalty | ❌ | **✅ repeat / freq / presence penalty** |
-| KV cache % | ❌ | **✅ Live fill indicator** |
-| Token counter | ❌ | **✅ Per-message t/s + token count** |
-| Ring buffer | 256 KB | **512 KB** |
-| Header | 8 bytes | **16 bytes (adds tokens_generated field)** |
-| Theme | Dark green | **Dark navy — modern chat app look** |
+    🧠 KV-Cache Quantization: New Q8_0 Cache Quantization allows you to store 2x more context (16k+) in the same RAM footprint.
 
----
+    🌌 Glassmorphic Cyber-UI: A futuristic, high-contrast interface with real-time TPS (Tokens Per Second) telemetry and smooth glass-effect surfaces.
 
-## Quick Start — Termux Deploy
+    🚀 Vulkan Unified Memory: Direct GPU-memory mapping for ultra-low latency response streaming.
 
-The fastest way to build and install from your Android phone:
+    🛠️ Robust Foundation: Upgraded to Gradle 9.5.1, NDK r29, and Compose BOM 2026.05.00.
 
-```bash
-# 1. Install Termux from F-Droid (NOT Play Store)
-#    https://f-droid.org/packages/com.termux/
+🏗️ Architecture Overview
 
-# 2. In Termux:
-pkg install git
-git clone https://github.com/YOUR_USERNAME/GGUF-ZeroCopy-v4
-cd GGUF-ZeroCopy-v4
+The "Zero-Copy" advantage comes from a shared-memory circular buffer between the native engine and the JVM.
+code Mermaid
 
-# 3. Run the deploy script — it does everything:
-chmod +x termux-deploy.sh
-./termux-deploy.sh
-```
+graph LR
+    subgraph "Native C++ (llama.cpp b9542)"
+        Engine[Engine Core]
+        KV[Q8_0 KV-Cache]
+    end
+    
+    Engine -- "Mapped Shared Memory (512KB)" --> UI
+    
+    subgraph "Kotlin/Compose (Android UI)"
+        UI[Glassmorphic UI]
+        Telemetry[Real-time TPS Meter]
+    end
 
-The script will:
-1. Install `git`, `gh` (GitHub CLI), `curl`, `jq`
-2. Authenticate you with GitHub (browser or PAT)
-3. Create the repo and push the code
-4. Trigger the GitHub Actions build
-5. Wait (~15-25 min) for the build to finish
-6. Download the APK to `~/storage/downloads/`
-7. Offer to install it directly
+🛠️ Build Specs
+Component	Version
+Gradle	9.5.1 (with retry-logic)
+AGP	9.1.1
+NDK	29.0.14206865
+llama.cpp	b9542 (June 2026)
+Compose BOM	2026.05.00
+🚀 Quick Setup
+1. Build Requirements
 
----
+Ensure you have the latest Android Studio (Ladybug or newer) and the NDK r29 installed via the SDK Manager.
+2. CI/CD Deployment
 
-## Manual GitHub Actions Build
+This project includes a production-grade GitHub Action. To trigger a build:
 
-1. Push to GitHub (any branch)
-2. Go to **Actions → Build GGUF ZeroCopy v4 APK → Run workflow**
-3. Optionally enter a release tag (e.g. `v4.0.0`) to create a GitHub Release
-4. Wait 15–25 min
-5. Download `GGUF-ZeroCopy-v4-debug` artifact
-6. `adb install GGUF-ZeroCopy-v4-debug-*.apk`
+    Push your changes.
 
----
+    The setup-gradle@v4 action will automatically handle caching and dependency synchronization, bypassing standard network timeouts.
 
-## Features
+⚙️ Configuration Reference
+Setting	Optimal Value	Description
+n_ctx	8192	Context window size
+n_gpu_layers	99	Forces full Vulkan offload
+cparams.type_k	Q8_0	KV-Cache quantization (Pro Feature)
+optimization	ThinLTO	Enables cross-module function inlining
+📱 The PRO UI Features
 
-### 💬 Chat Tab
-- Full multi-turn conversation with chat bubbles
-- User / Assistant roles with colour-coded bubbles
-- `<think>` accordion for reasoning models (ZAYA, Qwen3 thinking mode)
-- Timestamps and tokens/sec per message
-- **Stop button** cancels mid-stream generation
-- **Reset** clears history + KV cache
-- **Copy** exports the full conversation to clipboard
-- Long-press any bubble to copy that message
+    Real-time Telemetry: See your actual T/S (Tokens Per Second) calculated in real-time within the native bridge.
 
-### ⚙ Settings Tab
-- Context window, max tokens, GPU layers
-- Temperature, Top-P, Min-P
-- **Repeat / Frequency / Presence penalties** (new)
-- System prompt with live editing
-- Quick presets: Qwen3, Gemma 4, Reasoning, Creative
+    KV-Fill Monitoring: A sleek, glowing progress bar tracks your context window usage.
 
-### ℹ Info Tab
-- Model architecture, parameter count, embedding size, vocab size
-- Session total token count
-- Architecture diagram
+    Glassmorphic Output: A high-end, semi-transparent text area designed for high-density reading.
 
-### ⚡ Benchmark Tab
-- PP (prompt processing) tokens/sec
-- TG (token generation) tokens/sec
-- Visual result cards
+    Pro-Exec Button: One-tap inference start with hardware-accelerated feedback.
 
----
+📜 License
 
-## Settings Reference
+Copyright © 2026 GGUF ZeroCopy Engine. Built for power users.
+Pro-Tips for Optimization:
 
-| Setting | Description | Default |
-|---|---|---|
-| n_ctx | Context window (512–32768) | 8192 |
-| Max New Tokens | Tokens per reply | 4096 |
-| GPU Layers | Vulkan GPU layers (0=CPU) | 99 |
-| Temperature | 0=deterministic, 1=creative | 0.7 |
-| Top-P | Nucleus sampling | 0.9 |
-| Min-P | Low-prob token filter | 0.05 |
-| Repeat Penalty | Penalise repeated tokens | 1.1 |
-| Freq Penalty | Penalise frequent tokens | 0.0 |
-| Pres Penalty | Penalise any seen tokens | 0.0 |
+    Vulkan Stability: If your device crashes during boot, ensure your driver supports Vulkan 1.3.
 
----
+    Memory Management: Always load your model via the ACTION_OPEN_DOCUMENT picker to allow the engine to map the file descriptor directly into memory (the "Zero-Copy" path).
 
-## Architecture
-
-```
-Extended shared ring buffer (512 KB + 16-byte header):
-  Offset  0: uint32  write_pos
-  Offset  4: uint32  flags (bit0 = done)
-  Offset  8: uint32  tokens_generated
-  Offset 12: uint32  reserved
-  Offset 16: char[]  token_stream (512 KB UTF-8)
-
-C++ ipc-bridge.cpp          Kotlin EngineCore
-──────────────────          ──────────────────
-ASharedMemory_create()  ──fd──▶ SharedMemory.fromFileDescriptor()
-mmap(PROT_READ|WRITE)          .mapReadOnly()
-g_abort atomic flag            abortInferenceNative()
-benchmarkNative() PP+TG        JSONObject parsing
-getModelInfoNative() JSON      InfoTab display
-getKvCacheUsageNative()        KV% chip in TopBar
-```
-
----
-
-## Model Compatibility
-
-| Model | Variant | n_ctx |
-|---|---|---|
-| Qwen3-8B-Instruct | Q4_K_M | 8192 |
-| Qwen3.5-7B-Instruct | Q4_K_M | 8192 |
-| Gemma-4-9B-IT | Q4_K_M | 8192 |
-| Zyphra/ZAYA-1-8B | Q4_K_M | 8192 |
-| Phi-4-mini-Instruct | Q4_K_M | 4096 |
-| Llama-3.1-8B-Instruct | Q4_K_M | 8192 |
-
----
-
-## Known Limitations
-
-**Vulkan instability**: Some Adreno driver versions crash. Remove `-DGGML_VULKAN=ON` from `app/build.gradle.kts` to fall back to CPU NEON.
-
-**File copy**: SAF URIs require copying to cacheDir first (~30s for a 4GB model).
-
-**Memory**: Each 1024 tokens context ≈ 200 MB RAM for a Q4_K_M 7B model. Use n_ctx=4096 on low-RAM devices.
+    Build Faster: If running locally, use ./gradlew assembleDebug --parallel --offline to utilize your local Gradle cache

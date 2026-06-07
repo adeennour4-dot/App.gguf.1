@@ -1,246 +1,116 @@
 #include <jni.h>
-#include <android/log.h>
-#include <string>
-#include <cstring>
-#include <vector>
-#include <unistd.h>
+#include <android/sharedmem.h>
 #include <sys/mman.h>
-#include <fcntl.h>
+#include <unistd.h>
 #include <atomic>
-#include <thread>
-#include <chrono>
-
+#include <vector>
+#include <android/log.h>
 #include "llama.h"
 
-#define LOG_TAG "IPC_BRIDGE"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define TAG "GGUF_PRO_V5"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 
-constexpr const char* SHARED_MEM_NAME = "/llama_shared_mem";
-constexpr size_t SHARED_MEM_SIZE = 512 * 1024;
-constexpr size_t HEADER_SIZE = 16;
-
-struct SharedMemory {
-    volatile uint32_t state;
-    volatile uint32_t prompt_len;
-    char data[SHARED_MEM_SIZE - HEADER_SIZE];
+static constexpr size_t STREAM_SIZE = 524288;
+struct SharedBuffer {
+    volatile uint32_t write_pos;   // 0
+    volatile uint32_t flags;       // 4
+    volatile uint32_t tokens_gen;  // 8
+    volatile uint32_t tps_scaled;  // 12 (Tokens per sec * 100)
+    char data[STREAM_SIZE];
 };
 
-static llama_model*   g_model = nullptr;
-static llama_context* g_ctx   = nullptr;
-static std::atomic<bool> g_generating{false};
-static int g_shared_fd = -1;
-static SharedMemory* g_shm = nullptr;
+static SharedBuffer* g_buf = nullptr;
+static llama_model*  g_model = nullptr;
+static llama_context* g_ctx = nullptr;
+static llama_sampler* g_sampler = nullptr;
+static std::atomic<bool> g_abort{false};
 
-static std::string get_chat_template() {
-    const char* tmpl = llama_model_chat_template(g_model, nullptr);
-    if (tmpl && tmpl[0]) return std::string(tmpl);
-    return "{{ bos }}{{ user }} {{ message }} {{ assistant }}";
+extern "C" {
+
+JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_initializeSharedMemoryNative(JNIEnv*, jobject) {
+    int fd = ASharedMemory_create("gguf_pro_shm", sizeof(SharedBuffer));
+    if (fd < 0) return -1;
+    g_buf = (SharedBuffer*)mmap(NULL, sizeof(SharedBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    memset(g_buf, 0, sizeof(SharedBuffer));
+    return fd;
 }
 
-static int apply_chat_template(const std::vector<llama_chat_message>& msgs,
-                               bool add_assistant, char* buf, int32_t len) {
-    std::string tmpl = get_chat_template();
-    return llama_chat_apply_template(tmpl.c_str(),
-                                     msgs.data(), msgs.size(),
-                                     add_assistant, buf, len);
-}
+JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring path) {
+    const char* filePath = env->GetStringUTFChars(path, nullptr);
+    
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 99;
 
-static void kv_cache_clear() {
-    if (g_ctx) {
-        llama_kv_cache_clear(g_ctx);
-    }
-}
+    g_model = llama_model_load_from_file(filePath, mparams);
+    env->ReleaseStringUTFChars(path, filePath);
+    if (!g_model) return JNI_FALSE;
 
-static void kv_cache_shift(int keep, int n_discard) {
-    if (!g_ctx) return;
-    int n_ctx_used = llama_get_kv_cache_used_cells(g_ctx);
-    if (n_ctx_used <= keep + n_discard) return;
-    llama_kv_cache_seq_rm(g_ctx, 0, keep, keep + n_discard);
-    llama_kv_cache_seq_add(g_ctx, 0, keep + n_discard, n_ctx_used, -n_discard);
-}
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx = 8192;
+    
+    // SPECIAL FEATURE: 8-bit KV Cache Quantization (Saves 50% VRAM)
+    cparams.type_k = GGML_TYPE_Q8_0;
+    cparams.type_v = GGML_TYPE_Q8_0;
 
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_adeennour4_app_1gguf_1trial_MainActivity_nativeInitModel(
-        JNIEnv* env, jobject thiz,
-        jstring model_path,
-        jint n_ctx, jint n_threads, jfloat temperature,
-        jfloat top_p, jfloat min_p, jfloat repeat_penalty) {
-
-    const char* path = env->GetStringUTFChars(model_path, nullptr);
-    LOGI("Loading model: %s", path);
-
-    llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = 99;
-    model_params.use_mmap = true;
-
-    g_model = llama_load_model_from_file(path, model_params);
-    env->ReleaseStringUTFChars(model_path, path);
-
-    if (!g_model) {
-        LOGE("Failed to load model");
-        return JNI_FALSE;
-    }
-
-    llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = n_ctx;
-    ctx_params.n_threads = n_threads;
-    ctx_params.n_threads_batch = n_threads;
-    ctx_params.temperature = temperature;
-    ctx_params.top_p = top_p;
-    ctx_params.min_p = min_p;
-    ctx_params.penalty_repeat = repeat_penalty;
-    ctx_params.penalty_last_n = 64;
-    ctx_params.n_batch = 512;
-
-    g_ctx = llama_new_context_with_model(g_model, ctx_params);
-    if (!g_ctx) {
-        LOGE("Failed to create context");
-        llama_free_model(g_model);
-        g_model = nullptr;
-        return JNI_FALSE;
-    }
-
-    LOGI("Model and context initialized successfully");
+    g_ctx = llama_init_from_model(g_model, cparams);
+    
+    g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(0.05f, 1));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.8f));
+    
     return JNI_TRUE;
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_adeennour4_app_1gguf_1trial_MainActivity_nativeSetupSharedMemory(JNIEnv* env, jobject thiz) {
-    g_shared_fd = shm_open(SHARED_MEM_NAME, O_CREAT | O_RDWR, 0666);
-    if (g_shared_fd == -1) {
-        LOGE("shm_open failed");
-        return JNI_FALSE;
-    }
-    if (ftruncate(g_shared_fd, SHARED_MEM_SIZE) == -1) {
-        LOGE("ftruncate failed");
-        return JNI_FALSE;
-    }
-    g_shm = (SharedMemory*)mmap(nullptr, SHARED_MEM_SIZE,
-                                PROT_READ | PROT_WRITE, MAP_SHARED,
-                                g_shared_fd, 0);
-    if (g_shm == MAP_FAILED) {
-        LOGE("mmap failed");
-        return JNI_FALSE;
-    }
-    g_shm->state = 0;
-    g_shm->prompt_len = 0;
-    LOGI("Shared memory set up");
-    return JNI_TRUE;
-}
+JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstring prompt) {
+    if (!g_ctx || !g_buf) return;
+    const char* input = env->GetStringUTFChars(prompt, nullptr);
+    
+    g_buf->write_pos = 0;
+    g_buf->flags = 0;
+    g_abort = false;
 
-static void generation_thread() {
-    g_generating = true;
-    kv_cache_clear();
+    auto vocab = llama_model_get_vocab(g_model);
+    std::vector<llama_token> tokens(8192);
+    int n_toks = llama_tokenize(vocab, input, strlen(input), tokens.data(), 8192, true, false);
+    
+    llama_batch batch = llama_batch_get_one(tokens.data(), n_toks);
+    llama_decode(g_ctx, batch);
 
-    std::string prompt(g_shm->data, g_shm->prompt_len);
-    LOGI("Generating for prompt: %.50s...", prompt.c_str());
+    auto start_time = std::chrono::high_resolution_clock::now();
 
-    std::vector<llama_chat_message> msgs;
-    msgs.push_back({"user", prompt.c_str()});
+    for (int i = 0; i < 2048; i++) {
+        if (g_abort) break;
+        
+        llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
+        if (llama_vocab_is_eog(vocab, tok)) break;
 
-    int n_needed = apply_chat_template(msgs, false, nullptr, 0);
-    if (n_needed < 0) {
-        LOGE("apply_chat_template failed (1)");
-        g_shm->state = 4;
-        g_generating = false;
-        return;
-    }
-    std::vector<char> formatted(n_needed + 1);
-    int n_written = apply_chat_template(msgs, false, formatted.data(), n_needed + 1);
-    if (n_written < 0) {
-        LOGE("apply_chat_template failed (2)");
-        g_shm->state = 4;
-        g_generating = false;
-        return;
-    }
-
-    std::vector<llama_token> tokens(n_needed + 32);
-    int n_tokens = llama_tokenize(g_model, formatted.data(), formatted.size(),
-                                  tokens.data(), tokens.size(), true, false);
-    tokens.resize(n_tokens);
-
-    llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
-    if (llama_decode(g_ctx, batch)) {
-        LOGE("llama_decode failed for prompt");
-        g_shm->state = 4;
-        g_generating = false;
-        return;
-    }
-
-    std::string result;
-    const int max_tokens = 512;
-    for (int i = 0; i < max_tokens && g_generating; ++i) {
-        llama_token new_token = llama_sample_token(g_ctx, nullptr);
-        if (new_token == llama_token_eos(g_model)) break;
-
-        std::string piece = llama_token_to_piece(g_ctx, new_token);
-        result += piece;
-
-        size_t copy_len = std::min(result.size(), SHARED_MEM_SIZE - HEADER_SIZE - 1);
-        memcpy((char*)g_shm->data, result.c_str(), copy_len);
-        g_shm->data[copy_len] = '\0';
-        g_shm->state = 2;
-
-        llama_batch next_batch = llama_batch_get_one(&new_token, 1);
-        if (llama_decode(g_ctx, next_batch)) {
-            LOGE("llama_decode failed for token");
-            g_shm->state = 4;
-            break;
+        char piece[256];
+        int n = llama_token_to_piece(vocab, tok, piece, 256, 0, false);
+        
+        if (g_buf->write_pos + n < STREAM_SIZE) {
+            memcpy(g_buf->data + g_buf->write_pos, piece, n);
+            g_buf->write_pos += n;
+            g_buf->tokens_gen = i + 1;
+            
+            // Calculate real-time TPS
+            auto now = std::chrono::high_resolution_clock::now();
+            double duration = std::chrono::duration<double>(now - start_time).count();
+            if (duration > 0) g_buf->tps_scaled = (uint32_t)((i + 1) / duration * 100);
         }
+
+        llama_batch b = llama_batch_get_one(&tok, 1);
+        llama_decode(g_ctx, b);
     }
 
-    g_shm->state = 3;
-    g_generating = false;
-    LOGI("Generation finished");
+    g_buf->flags = 1; 
+    env->ReleaseStringUTFChars(prompt, input);
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_adeennour4_app_1gguf_1trial_MainActivity_nativeStartGeneration(JNIEnv* env, jobject thiz) {
-    if (!g_ctx || !g_shm) {
-        LOGE("Context or shared memory not ready");
-        return;
-    }
-    std::thread thr(generation_thread);
-    thr.detach();
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_adeennour4_app_1gguf_1trial_MainActivity_nativeStopGeneration(JNIEnv* env, jobject thiz) {
-    g_generating = false;
-    if (g_ctx) {
-        kv_cache_clear();
-    }
-    if (g_shm) {
-        g_shm->state = 0;
-    }
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_adeennour4_app_1gguf_1trial_MainActivity_nativeCleanup(JNIEnv* env, jobject thiz) {
-    g_generating = false;
-    if (g_ctx) {
-        llama_free(g_ctx);
-        g_ctx = nullptr;
-    }
-    if (g_model) {
-        llama_free_model(g_model);
-        g_model = nullptr;
-    }
-    if (g_shm) {
-        munmap(g_shm, SHARED_MEM_SIZE);
-        g_shm = nullptr;
-    }
-    if (g_shared_fd != -1) {
-        close(g_shared_fd);
-        shm_unlink(SHARED_MEM_NAME);
-        g_shared_fd = -1;
-    }
-    LOGI("Cleanup complete");
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_adeennour4_app_1gguf_1trial_MainActivity_nativeGetUsedTokens(JNIEnv* env, jobject thiz) {
+JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_getKvCacheUsageNative(JNIEnv*, jobject) {
     if (!g_ctx) return 0;
-    return llama_get_kv_cache_used_cells(g_ctx);
+    llama_memory_t mem = llama_get_memory(g_ctx);
+    int used = (int)llama_memory_seq_pos_max(mem, 0) + 1;
+    return (used * 100) / 8192;
+}
+
 }
