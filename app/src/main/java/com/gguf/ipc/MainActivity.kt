@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,7 +48,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun UltraProScreen() {
-    val activity = androidx.compose.ui.platform.LocalContext.current as MainActivity
+    val activity = LocalContext.current as MainActivity
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     
@@ -57,7 +58,6 @@ fun UltraProScreen() {
     var modelLoaded by remember { mutableStateOf(false) }
     var isRunning by remember { mutableStateOf(false) }
 
-    // FIXED: Proper infinite color animation
     val infiniteTransition = rememberInfiniteTransition(label = "neon")
     val neonColor by infiniteTransition.animateColor(
         initialValue = Color(0xFF00FBFF),
@@ -76,7 +76,7 @@ fun UltraProScreen() {
                 output = EngineCore.readPartialStream()
                 tps = EngineCore.getTpsScaled()
                 if (isRunning && EngineCore.isInferenceDone()) isRunning = false
-                if (output.length > 10) scrollState.animateScrollTo(scrollState.maxValue)
+                if (output.length > 5) scrollState.animateScrollTo(scrollState.maxValue)
             }
         }
     }
@@ -94,15 +94,15 @@ fun UltraProScreen() {
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("GGUF ULTRA PRO", color = neonColor, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+            Text(text = "GGUF ULTRA PRO", color = neonColor, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
             Spacer(Modifier.weight(1f))
-            Text("${"%.1f".format(tps)} TPS", color = neonColor, fontFamily = FontFamily.Monospace)
+            Text(text = "${"%.1f".format(tps)} TPS", color = neonColor, fontFamily = FontFamily.Monospace)
         }
 
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 20.dp)
             .background(Color(0xFF080C14)).border(1.dp, neonColor.copy(0.2f))
             .padding(15.dp).verticalScroll(scrollState)) {
-            Text(output, color = Color.White, fontFamily = FontFamily.Monospace)
+            Text(text = output, color = Color.White, fontFamily = FontFamily.Monospace)
         }
 
         OutlinedTextField(
@@ -116,9 +116,7 @@ fun UltraProScreen() {
             )
         )
 
-        Spacer(Modifier.height(10.dp))
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }) },
                 modifier = Modifier.weight(0.4f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10141D))) {
                 Text("LOAD")
