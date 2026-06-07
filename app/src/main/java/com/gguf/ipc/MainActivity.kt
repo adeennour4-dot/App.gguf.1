@@ -1,15 +1,13 @@
-
-
 package com.gguf.ipc
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,7 +15,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -26,204 +26,119 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
 import java.io.File
 
-// Design Palette
-private val CyanNeon = Color(0xFF00F2FF)
-private val BgDeep = Color(0xFF05070A)
-private val BgCard = Color(0xFF10141D)
+// Futuristic Theme
+private val NeonCyan = Color(0xFF00FBFF)
+private val DarkVoid = Color(0xFF020408)
+private val CyberGrey = Color(0xFF10141D)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         EngineCore.bootZeroCopyEngine()
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = CyanNeon, surface = BgCard)) {
-                Surface(modifier = Modifier.fillMaxSize(), color = BgDeep) {
-                    GgufProV5Screen()
-                }
+            MaterialTheme(colorScheme = darkColorScheme(primary = NeonCyan)) {
+                UltraEngineScreen()
             }
         }
     }
 
-    // Helper to move GGUF from Downloads to Private Storage
-    fun copyUriToFiles(uri: Uri, filename: String): String? = try {
-        val cacheFile = File(filesDir, filename)
-        contentResolver.openInputStream(uri)?.use { input ->
-            cacheFile.outputStream().use { output -> input.copyTo(output) }
-        }
-        cacheFile.absolutePath
+    fun copyModel(uri: android.net.Uri): String? = try {
+        val file = File(filesDir, "active_model.gguf")
+        contentResolver.openInputStream(uri)?.use { it.copyTo(file.outputStream()) }
+        file.absolutePath
     } catch (e: Exception) { null }
 }
 
 @Composable
-fun GgufProV5Screen() {
+fun UltraEngineScreen() {
     val activity = LocalContext.current as MainActivity
-    val coroutineScope = rememberCoroutineScope()
-    
-    // UI State
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var engineStatus by remember { mutableStateOf("No Model Loaded") }
-    var modelLoaded by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(false) }
-    var isInferring by remember { mutableStateOf(false) }
-    
-    // Telemetry State
-    var outputText by remember { mutableStateOf("Awaiting Model...") }
+    val scope = rememberCoroutineScope()
+    var tab by remember { mutableIntStateOf(0) }
+    var output by remember { mutableStateOf("> SYSTEM IDLE\n> AWAITING COMMAND...") }
+    var input by remember { mutableStateOf("") }
     var tps by remember { mutableFloatStateOf(0f) }
-    var kvUsage by remember { mutableIntStateOf(0) }
+    var isRunning by remember { mutableStateOf(false) }
+    var modelReady by remember { mutableStateOf(false) }
 
-    // Settings State
-    var nCtx by remember { mutableStateOf("4096") }
-    var temp by remember { mutableStateOf("0.7") }
-    var gpuLayers by remember { mutableStateOf("0") }
-
-    // Polling Loop
     LaunchedEffect(Unit) {
         while (true) {
-            delay(150)
-            if (modelLoaded) {
-                outputText = EngineCore.readPartialStream()
+            delay(100)
+            if (modelReady) {
+                output = EngineCore.readPartialStream()
                 tps = EngineCore.getTpsScaled()
-                kvUsage = EngineCore.getKvCacheUsageNative()
-                if (isInferring && EngineCore.isInferenceDone()) isInferring = false
+                if (isRunning && EngineCore.isInferenceDone()) isRunning = false
             }
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                isLoading = true
-                engineStatus = "Mapping Model..."
-                coroutineScope.launch(Dispatchers.IO) {
-                    val path = activity.copyUriToFiles(uri, "model.gguf")
-                    if (path != null) {
-                        val success = EngineCore.loadModel(path)
-                        withContext(Dispatchers.Main) {
-                            modelLoaded = success
-                            isLoading = false
-                            engineStatus = if (success) "✓ Model Active" else "✗ Load Failed"
-                        }
-                    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.resultCode == Activity.RESULT_OK) {
+            it.data?.data?.let { uri ->
+                scope.launch(Dispatchers.IO) {
+                    val path = activity.copyModel(uri)
+                    if (path != null && EngineCore.loadModel(path)) modelReady = true
                 }
             }
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        // --- TOP BAR ---
-        Box(Modifier.fillMaxWidth().background(BgCard).padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("GGUF PRO v5", color = CyanNeon, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text(engineStatus, color = Color.Gray, fontSize = 11.sp)
-                }
-                Button(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                        }
-                        filePicker.launch(intent)
-                    },
-                    enabled = !isLoading && !isInferring,
-                    colors = ButtonDefaults.buttonColors(containerColor = CyanNeon),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(if (isLoading) "LOADING..." else "LOAD GGUF", color = Color.Black, fontSize = 12.sp)
-                }
+    Column(Modifier.fillMaxSize().background(DarkVoid).padding(16.dp)) {
+        // Holographic Header
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("GGUF ULTRA v5", color = NeonCyan, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                Text(if (modelReady) "CORE ONLINE" else "CORE OFFLINE", color = if (modelReady) Color.Green else Color.Red, fontSize = 10.sp)
+            }
+            // TPS Card
+            Box(Modifier.border(1.dp, NeonCyan, RoundedCornerShape(4.dp)).padding(8.dp)) {
+                Text("${"%.1f".format(tps)} TPS", color = NeonCyan, fontFamily = FontFamily.Monospace)
             }
         }
 
-        // --- TAB BAR ---
-        TabRow(selectedTabIndex = selectedTab, containerColor = BgCard, contentColor = CyanNeon) {
-            val tabs = listOf("CHAT", "SETTINGS", "INFO")
-            tabs.forEachIndexed { index, title ->
-                Tab(selected = selectedTab == index, onClick = { selectedTab = index }) {
-                    Text(title, modifier = Modifier.padding(12.dp), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
-            }
-        }
+        Spacer(Modifier.height(20.dp))
 
-        // --- CONTENT ---
-        when (selectedTab) {
-            0 -> ChatTab(outputText, tps, kvUsage, isInferring, modelLoaded, onSend = { prompt ->
-                if (!isInferring && modelLoaded) {
-                    isInferring = true
-                    coroutineScope.launch(Dispatchers.IO) { EngineCore.executeZeroCopyInference(prompt) }
-                }
-            })
-            1 -> SettingsTab(nCtx, temp, gpuLayers, onNCtxChange = {nCtx = it}, onTempChange = {temp = it}, onGpuChange = {gpuLayers = it})
-            2 -> InfoTab(kvUsage)
-        }
-    }
-}
-
-@Composable
-fun ChatTab(output: String, tps: Float, kv: Int, inferring: Boolean, loaded: Boolean, onSend: (String) -> Unit) {
-    var input by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row {
-            Text("TELEMETRY: ${"%.1f".format(tps)} TPS", color = CyanNeon, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.weight(1f))
-            Text("KV: $kv%", color = CyanNeon, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-        }
-        
-        Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)
-            .background(BgCard, RoundedCornerShape(8.dp))
-            .border(0.5.dp, Color.White.copy(0.1f), RoundedCornerShape(8.dp))
+        // Matrix Console Output
+        Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(8.dp))
+            .background(CyberGrey).border(0.5.dp, NeonCyan.copy(0.3f), RoundedCornerShape(8.dp))
             .padding(12.dp).verticalScroll(rememberScrollState())) {
-            Text(output, color = Color.White, fontSize = 15.sp)
+            Text(output, color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
         }
 
+        Spacer(Modifier.height(12.dp))
+
+        // Cyber Input
         OutlinedTextField(
             value = input, onValueChange = { input = it },
             modifier = Modifier.fillMaxWidth(),
-            enabled = loaded,
-            placeholder = { Text("Enter prompt...", color = Color.DarkGray) },
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CyanNeon, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontFamily = FontFamily.Monospace),
+            placeholder = { Text("CMD_PROMPT >", color = Color.Gray) },
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = NeonCyan, unfocusedBorderColor = Color.DarkGray)
         )
-        
-        Button(
-            onClick = { onSend(input); input = "" },
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            enabled = loaded && !inferring,
-            colors = ButtonDefaults.buttonColors(containerColor = CyanNeon)
-        ) {
-            Text(if (inferring) "ENGINE BUSY" else "EXECUTE", color = Color.Black)
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { 
+                    val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }
+                    picker.launch(i)
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = CyberGrey)
+            ) { Text("LOAD_CORE", color = NeonCyan) }
+
+            Button(
+                onClick = { 
+                    isRunning = true
+                    scope.launch(Dispatchers.IO) { EngineCore.executeZeroCopyInference(input) }
+                    input = ""
+                },
+                enabled = modelReady && !isRunning,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+            ) { Text("EXECUTE", color = Color.Black, fontWeight = FontWeight.Bold) }
         }
     }
 }
 
-@Composable
-fun SettingsTab(nCtx: String, temp: String, gpu: String, onNCtxChange: (String) -> Unit, onTempChange: (String) -> Unit, onGpuChange: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Text("ENGINE CONFIGURATION", color = CyanNeon, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(16.dp))
-        
-        Text("Context Size (n_ctx)", color = Color.Gray, fontSize = 12.sp)
-        OutlinedTextField(value = nCtx, onValueChange = onNCtxChange, modifier = Modifier.fillMaxWidth())
-        
-        Spacer(Modifier.height(8.dp))
-        Text("Temperature", color = Color.Gray, fontSize = 12.sp)
-        OutlinedTextField(value = temp, onValueChange = onTempChange, modifier = Modifier.fillMaxWidth())
 
-        Spacer(Modifier.height(8.dp))
-        Text("GPU Layers (Vulkan)", color = Color.Gray, fontSize = 12.sp)
-        OutlinedTextField(value = gpu, onValueChange = onGpuChange, modifier = Modifier.fillMaxWidth())
-        
-        Spacer(Modifier.height(16.dp))
-        Text("Note: Model reload required for n_ctx and GPU changes.", color = Color.Yellow.copy(0.7f), fontSize = 10.sp)
-    }
-}
-
-@Composable
-fun InfoTab(kv: Int) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("SYSTEM INFORMATION", color = CyanNeon, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(16.dp))
-        Text("Architecture: llama.cpp b9542", color = Color.White)
-        Text("Backend: CPU (ARMv8.4 DotProd)", color = Color.White)
-        Text("Shared Memory: 512KB Ring Buffer", color = Color.White)
-        Text("KV-Cache Usage: $kv%", color = Color.White)
-    }
-}
