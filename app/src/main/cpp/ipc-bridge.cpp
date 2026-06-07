@@ -1,3 +1,4 @@
+
 #include <jni.h>
 #include <android/sharedmem.h>
 #include <sys/mman.h>
@@ -7,8 +8,6 @@
 #include <vector>
 #include <android/log.h>
 #include "llama.h"
-
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "ULTRA_V5", __VA_ARGS__)
 
 static constexpr size_t STREAM_SIZE = 524288;
 struct SharedBuffer {
@@ -28,7 +27,7 @@ static std::atomic<bool> g_abort{false};
 extern "C" {
 
 JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_initializeSharedMemoryNative(JNIEnv*, jobject) {
-    int fd = ASharedMemory_create("gguf_v5_pro_shm", sizeof(SharedBuffer));
+    int fd = ASharedMemory_create("gguf_pro_shm", sizeof(SharedBuffer));
     if (fd < 0) return -1;
     g_buf = (SharedBuffer*)mmap(NULL, sizeof(SharedBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     memset(g_buf, 0, sizeof(SharedBuffer));
@@ -41,16 +40,14 @@ JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIE
     if (g_model) { llama_model_free(g_model); g_model = nullptr; }
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.use_mmap = true; // Essential for S23 FE
+    mparams.use_mmap = true;
     g_model = llama_model_load_from_file(filePath, mparams);
     env->ReleaseStringUTFChars(path, filePath);
     if (!g_model) return JNI_FALSE;
 
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = 4096; // Stability limit for mobile
-    cparams.n_batch = 512;
+    cparams.n_ctx = 4096;
     g_ctx = llama_init_from_model(g_model, cparams);
-    
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.7f));
     return JNI_TRUE;
@@ -59,16 +56,12 @@ JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIE
 JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstring prompt) {
     if (!g_ctx || !g_buf) return;
     const char* input = env->GetStringUTFChars(prompt, nullptr);
-    
-    g_buf->write_pos = 0;
-    g_buf->flags = 0;
-    g_abort = false;
+    g_buf->write_pos = 0; g_buf->flags = 0; g_abort = false;
 
     auto vocab = llama_model_get_vocab(g_model);
     std::vector<llama_token> tokens(8192);
     int n_toks = llama_tokenize(vocab, input, strlen(input), tokens.data(), 8192, true, false);
 
-    // FIX: CHUNKED DECODING (Stops the "No-Output Crash")
     for (int i = 0; i < n_toks; i += 512) {
         int n_eval = std::min(512, n_toks - i);
         llama_decode(g_ctx, llama_batch_get_one(&tokens[i], n_eval));
@@ -85,8 +78,6 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNI
         if (g_buf->write_pos + n < STREAM_SIZE) {
             memcpy(g_buf->data + g_buf->write_pos, piece, n);
             g_buf->write_pos += n;
-            g_buf->tokens_gen = i + 1;
-            
             auto now = std::chrono::high_resolution_clock::now();
             double dur = std::chrono::duration<double>(now - start).count();
             if (dur > 0) g_buf->tps_scaled = (uint32_t)((i + 1) / dur * 100);
