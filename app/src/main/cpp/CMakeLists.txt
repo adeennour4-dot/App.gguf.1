@@ -3,7 +3,12 @@ project("gguf_v5_pro")
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Pre-set Vulkan paths for NDK 29
+# Disable Vulkan to fix the "SPIRV-Headers not found" error on CI
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
 include(FetchContent)
 FetchContent_Declare(
     llama
@@ -15,12 +20,15 @@ FetchContent_MakeAvailable(llama)
 
 add_library(ipc-bridge SHARED ipc-bridge.cpp)
 
-# Link for high-end math acceleration
 target_link_libraries(ipc-bridge
     PRIVATE
     llama
     ggml
     android
     log
-    vulkan
+)
+
+target_include_directories(ipc-bridge PRIVATE 
+    ${llama_SOURCE_DIR}/include
+    ${llama_SOURCE_DIR}/ggml/include
 )
