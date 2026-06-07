@@ -11,7 +11,7 @@ object EngineCore {
     init { System.loadLibrary("ipc-bridge") }
 
     external fun initializeSharedMemoryNative(): Int
-    external fun loadGgufModelNative(path: String): Boolean
+    external fun loadGgufModelNative(filePath: String): Boolean
     external fun executeZeroCopyInference(prompt: String)
     external fun getKvCacheUsageNative(): Int
     private external fun isInferenceDoneNative(): Boolean
@@ -21,7 +21,8 @@ object EngineCore {
     fun bootZeroCopyEngine() {
         val fd = initializeSharedMemoryNative()
         if (fd >= 0) {
-            val shm = SharedMemory.fromFileDescriptor(ParcelFileDescriptor.fromFd(fd))
+            val pfd = ParcelFileDescriptor.fromFd(fd)
+            val shm = SharedMemory.fromFileDescriptor(pfd)
             readBuffer = shm.mapReadOnly().apply { order(ByteOrder.LITTLE_ENDIAN) }
         }
     }
@@ -40,6 +41,7 @@ object EngineCore {
 
     fun getTpsScaled(): Float {
         val buf = readBuffer ?: return 0f
+        // Read tps_scaled from Offset 12 in the shared memory header
         return buf.getInt(12) / 100f
     }
 
