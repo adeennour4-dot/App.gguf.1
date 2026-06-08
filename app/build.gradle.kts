@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.gguf.ipc"
-        minSdk        = 27
+        minSdk        = 29                 // FIXED: Prevents SharedMemory API compilation failures
         targetSdk     = 36
         versionCode   = 5
         versionName   = "5.0"
@@ -57,6 +57,11 @@ android {
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        
+        // FIXED: Bypasses manifest extractNativeLibs crash and forces JNI extraction
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
