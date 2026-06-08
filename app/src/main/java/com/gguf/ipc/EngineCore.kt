@@ -11,8 +11,7 @@ import java.nio.ByteOrder
 
 /**
  * EngineCore v5 — Kotlin bridge to the C++ llama.cpp JNI engine.
- *
- * Fixed for Samsung S23 FE (Exynos 2200) stability with smart hardware fallback.
+ * * Clean compiler pass verification optimized for ARMv8/ARMv9 execution.
  */
 object EngineCore {
 
@@ -21,7 +20,9 @@ object EngineCore {
     private const val TOKEN_STREAM_SIZE = 524288       // 512 KB
     private const val TOTAL_SIZE        = HEADER_SIZE + TOKEN_STREAM_SIZE
 
-    init { System.loadLibrary("ipc-bridge") }
+    init { 
+        System.loadLibrary("ipc-bridge") 
+    }
 
     // -----------------------------------------------------------------------
     // Native declarations
@@ -62,16 +63,16 @@ object EngineCore {
     private var readBuffer: ByteBuffer? = null
 
     // -----------------------------------------------------------------------
-    // Config (FIXED: Defaults are now hardware-safe values!)
+    // Config Definitions
     // -----------------------------------------------------------------------
     data class Config(
-        val nCtx: Int          = 4096,         // Lower baseline context to save mobile VRAM
+        val nCtx: Int          = 4096,
         val maxNewTokens: Int  = 2048,
         val temperature: Float = 0.7f,
         val topP: Float        = 0.9f,
         val minP: Float        = 0.05f,
-        val nGpuLayers: Int    = 0,            // SAFE DEFAULT: Start at CPU-only, let auto-detect scale up
-        val nThreads: Int      = 4,            // Dynamic setup handles this below
+        val nGpuLayers: Int    = 0,
+        val nThreads: Int      = 4,
         val seed: Int          = -1
     )
 
@@ -85,9 +86,6 @@ object EngineCore {
     // Smart Hardware Auto-Detection Methods
     // -----------------------------------------------------------------------
     
-    /**
-     * Scans your phone's processor and RAM to pick a safe, non-crashing GPU target.
-     */
     fun autoDetectGpuLayers(context: Context): Int {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo()
@@ -99,7 +97,82 @@ object EngineCore {
 
         Log.d(TAG, "Hardware Detected: HW=$hardwareName, BOARD=$processorName, RAM=${totalRamGb}GB")
 
-        // Strict validation rules for the Exynos 2200 Xclipse GPU
         return when {
             hardwareName.contains("exynos") || processorName.contains("s5e9925") -> {
-                if (totalRamGb >= 8) 16 else
+                if (totalRamGb >= 8) 16 else 0
+            }
+            else -> {
+                if (totalRamGb >= 12) 32 else 24
+            }
+        }
+    }
+
+    fun autoDetectThreads(): Int {
+        val totalCores = Runtime.getRuntime().availableProcessors()
+        return if (totalCores > 4) totalCores - 2 else 4
+    }
+
+    fun setEngineConfig(cfg: Config) {
+        setEngineConfigNative(
+            cfg.nCtx, cfg.maxNewTokens,
+            cfg.temperature, cfg.topP, cfg.minP,
+            cfg.nGpuLayers, cfg.nThreads, cfg.seed
+        )
+    }
+
+    fun setRepeatPenalty(cfg: RepeatPenaltyConfig) {
+        setRepeatPenaltyNative(cfg.repeatPenalty, cfg.freqPenalty, cfg.presPenalty)
+    }
+
+    // -----------------------------------------------------------------------
+    // Boot Engine Linker Execution
+    // -----------------------------------------------------------------------
+    fun bootZeroCopyEngine() {
+        val nativeFd = initializeSharedMemoryNative()
+        if (nativeFd < 0) {
+            Log.e(TAG, "initializeSharedMemoryNative returned $nativeFd")
+            return
+        }
+        try {
+            val pfd    = ParcelFileDescriptor.fromFd(nativeFd)
+            val dupPfd = pfd.dup()
+            pfd.close() 
+            sharedMemory = SharedMemory.fromFileDescriptor(dupPfd)
+            dupPfd.close()
+            readBuffer = sharedMemory!!.mapReadOnly().apply { order(ByteOrder.LITTLE_ENDIAN) }
+            Log.i(TAG, "Shared ring buffer mapped safely.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to map shared memory: ${e.message}", e)
+        }
+    }
+
+    fun loadModel(path: String): Boolean {
+        Log.i(TAG, "Loading model: $path")
+        return loadGgufModelNative(path)
+    }
+
+    // -----------------------------------------------------------------------
+    // Stream reading
+    // -----------------------------------------------------------------------
+    fun readPartialStream(): String {
+        val buf = readBuffer ?: return ""
+        buf.position(0)
+        val writePos = buf.int.and(0x7FFFFFFF).coerceAtMost(TOKEN_STREAM_SIZE)
+        if (writePos == 0) return ""
+        buf.position(HEADER_SIZE)
+        val bytes = ByteArray(writePos)
+        buf.get(bytes)
+        return String(bytes, Charsets.UTF_8).trimEnd('\u0000')
+    }
+
+    fun readTokenStream(): String = readPartialStream()
+
+    fun getTokensGenerated(): Int {
+        val buf = readBuffer ?: return 0
+        buf.position(8)
+        return buf.int.and(0x7FFFFFFF)
+    }
+
+    fun getWritePos(): Int         = getWritePosNative()
+    fun isInferenceDone(): Boolean = isInferenceDoneNative()
+}
