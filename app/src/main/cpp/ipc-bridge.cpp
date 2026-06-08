@@ -39,7 +39,7 @@ JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIE
     const char* filePath = env->GetStringUTFChars(path, nullptr);
     
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 99;
+    mparams.n_gpu_layers = 0;
 
     g_model = llama_model_load_from_file(filePath, mparams);
     env->ReleaseStringUTFChars(path, filePath);
