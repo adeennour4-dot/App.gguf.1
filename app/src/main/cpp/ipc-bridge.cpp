@@ -52,7 +52,7 @@ static float  g_pres_penalty   = 0.0f;
 // ── Helpers ──
 static void rebuild_sampler() {
     if (g_sampler) {
-        // llama_sampler_free(g_sampler);  // depends on llama.cpp version
+        llama_sampler_free(g_sampler);
         g_sampler = nullptr;
     }
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
@@ -64,9 +64,9 @@ static void rebuild_sampler() {
 
 static void cleanup_model() {
     g_context_active = false;
-    if (g_sampler) { g_sampler = nullptr; }
-    if (g_ctx)      { llama_free(g_ctx);     g_ctx    = nullptr; }
-    if (g_model)    { llama_model_free(g_model); g_model = nullptr; }
+    if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
+    if (g_ctx)     { llama_free(g_ctx);             g_ctx    = nullptr; }
+    if (g_model)   { llama_model_free(g_model);     g_model  = nullptr; }
 }
 
 extern "C" {
@@ -260,7 +260,7 @@ JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_resetContextNative(JNIEnv*, jobject) {
     if (g_ctx) {
         auto mem = llama_get_memory(g_ctx);
-        llama_memory_seq_rm(mem, 0, -1, -1);
+        llama_memory_clear(mem, true);
     }
     if (g_buf) {
         g_buf->write_pos  = 0;
