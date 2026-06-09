@@ -1,34 +1,51 @@
 here<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
 
-    <!-- ACTION_OPEN_DOCUMENT grants temporary URI access; no storage permissions needed -->
-    <uses-feature android:name="android.hardware.vulkan.level"   android:required="false" />
-    <uses-feature android:name="android.hardware.vulkan.version"
-        android:version="0x00401000" android:required="false" />
+    <!-- Outer glow ring -->
+    <path android:fillColor="#1A22D3EE"
+        android:pathData="M54,8 A46,46 0 1,1 54,100 A46,46 0 1,1 54,8 Z"/>
 
-    <queries>
-        <intent><action android:name="android.intent.action.OPEN_DOCUMENT" /></intent>
-        <intent><action android:name="android.intent.action.GET_CONTENT"    /></intent>
-    </queries>
+    <!-- Circuit lines (horizontal) -->
+    <path android:strokeColor="#22D3EE" android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round"
+        android:pathData="M22,54 L34,54 M74,54 L86,54"/>
+    <!-- Circuit lines (vertical) -->
+    <path android:strokeColor="#22D3EE" android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round"
+        android:pathData="M54,22 L54,34 M54,74 L54,86"/>
+    <!-- Circuit dots at corners -->
+    <circle android:fillColor="#22D3EE" android:cx="34" android:cy="34" android:r="2.5"/>
+    <circle android:fillColor="#22D3EE" android:cx="74" android:cy="34" android:r="2.5"/>
+    <circle android:fillColor="#22D3EE" android:cx="34" android:cy="74" android:r="2.5"/>
+    <circle android:fillColor="#22D3EE" android:cx="74" android:cy="74" android:r="2.5"/>
+    <!-- Diagonal connectors -->
+    <path android:strokeColor="#0E7490" android:strokeWidth="1"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M34,34 L40,40 M74,34 L68,40 M34,74 L40,68 M74,74 L68,68"/>
 
-    <application
-        android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="@string/app_name"
-        android:theme="@style/Theme.GGUFZeroCopyV5"
-        android:hardwareAccelerated="true"
-        android:largeHeap="true">
+    <!-- Central chip body -->
+    <rect android:fillColor="#0E1C2E" android:strokeColor="#22D3EE" android:strokeWidth="2"
+        android:x="38" android:y="38" android:width="32" android:height="32" android:rx="5"/>
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>
+    <!-- Chip pins (top/bottom) -->
+    <path android:strokeColor="#34D399" android:strokeWidth="2"
+        android:fillColor="@android:color/transparent" android:strokeLineCap="round"
+        android:pathData="M45,38 L45,34 M54,38 L54,34 M63,38 L63,34
+                          M45,70 L45,74 M54,70 L54,74 M63,70 L63,74"/>
+    <!-- Chip pins (left/right) -->
+    <path android:strokeColor="#34D399" android:strokeWidth="2"
+        android:fillColor="@android:color/transparent" android:strokeLineCap="round"
+        android:pathData="M38,45 L34,45 M38,54 L34,54 M38,63 L34,63
+                          M70,45 L74,45 M70,54 L74,54 M70,63 L74,63"/>
+
+    <!-- Inner "G" letter mark -->
+    <path android:fillColor="#22D3EE"
+        android:pathData="M57,47 L51,47 A7,7 0 0,0 51,61 L57,61 L57,55 L54,55 L54,57
+                          L57,57 L57,59 L52,59 A5,5 0 0,1 52,49 L57,49 Z"/>
+</vector>
