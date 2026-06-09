@@ -1,6 +1,8 @@
+// app/build.gradle.kts — AGP 9.x built-in Kotlin
+// org.jetbrains.kotlin.android is NOT applied here; AGP 9 provides it natively.
+// The compose compiler plugin is still applied to enable Jetpack Compose.
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")          // ← FIXED: was missing, Kotlin files wouldn't compile
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -54,7 +56,13 @@ android {
     }
 }
 
-kotlin { jvmToolchain(17) }
+// AGP 9 built-in Kotlin: use kotlin.compilerOptions instead of
+// the removed kotlinOptions / jvmToolchain DSL from kotlin-android.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
 
 dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
