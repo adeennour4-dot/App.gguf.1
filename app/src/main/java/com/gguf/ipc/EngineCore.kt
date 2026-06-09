@@ -92,6 +92,8 @@ object EngineCore {
         val b = buf()
         val pos = b.getInt(0) and 0x7FFFFFFF
         val cap = pos.coerceAtMost(STREAM_CAPACITY)
+        // Detect reset: C++ reset write_pos to 0 but lastReadPos still holds old value
+        if (cap < lastReadPos) lastReadPos = 0
         if (cap <= lastReadPos) return ""
         val len = cap - lastReadPos
         val bytes = ByteArray(len)

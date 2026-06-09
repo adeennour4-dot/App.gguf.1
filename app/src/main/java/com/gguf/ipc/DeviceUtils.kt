@@ -184,7 +184,16 @@ object DeviceUtils {
         return (cores * 0.85f).toInt().coerceIn(2, 16)
     }
 
+    private fun isExynos(): Boolean {
+        val hw = Build.HARDWARE.lowercase()
+        if (hw.contains("exynos") || hw.startsWith("s5e")) return true
+        val board = Build.BOARD.lowercase()
+        return board.contains("exynos") || board.startsWith("s5e")
+    }
+
     private fun calculateSuggestedGpuLayers(): Int {
+        // Exynos GPUs (Xclipse / RDNA 2) have poor Vulkan support with llama.cpp
+        if (isExynos()) return 0
         val mem = vramBytes() shr 30
         return when {
             mem >= 8 -> 99
