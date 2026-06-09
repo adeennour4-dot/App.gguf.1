@@ -27,6 +27,16 @@ struct SharedBuffer {
     char data[STREAM_SIZE - HEADER_SIZE];  // +16
 };
 
+// ── JNI on-load: init llama backend (GPU, CPU, etc.) ──
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM*, void*) {
+    llama_backend_init();
+    return JNI_VERSION_1_6;
+}
+
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM*, void*) {
+    llama_backend_free();
+}
+
 // ── Global state ──
 static SharedBuffer*     g_buf      = nullptr;
 static llama_model*      g_model    = nullptr;
@@ -147,9 +157,12 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx     = g_n_ctx;
+    cparams.n_batch   = 2048;
+    cparams.n_ubatch  = 512;
     cparams.type_k    = GGML_TYPE_Q8_0;
     cparams.type_v    = GGML_TYPE_Q8_0;
     cparams.n_threads = g_n_threads;
+    cparams.n_threads_batch = g_n_threads;
 
     g_ctx = llama_init_from_model(g_model, cparams);
     if (!g_ctx) {
@@ -200,6 +213,11 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
     }
 
     rebuild_sampler();
+    if (!g_sampler) {
+        LOGE("Failed to create sampler");
+        env->ReleaseStringUTFChars(prompt, input);
+        return;
+    }
 
     // Eval prompt
     llama_batch batch = llama_batch_get_one(tokens.data(), n_toks);
