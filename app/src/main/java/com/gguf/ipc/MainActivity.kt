@@ -141,6 +141,7 @@ private fun AppRoot() {
     var isInferring     by remember { mutableStateOf(false) }
     var modelLoaded     by remember { mutableStateOf(false) }
     var modelFilename   by remember { mutableStateOf("") }
+    var modelPath       by remember { mutableStateOf("") }
     var modelInfo       by remember { mutableStateOf<JSONObject?>(null) }
     var streamedText    by remember { mutableStateOf("") }
     var promptInput     by remember { mutableStateOf("") }
@@ -179,8 +180,9 @@ private fun AppRoot() {
         chatHistory.addAll(msgs)
     }
 
-    // Init: load first session
+    // Init: auto-detect device, load first session
     LaunchedEffect(Unit) {
+        autoDetectAndApply()
         loadChatSession()
     }
 
@@ -290,6 +292,7 @@ private fun AppRoot() {
                         isLoading = false
                         modelLoaded = ok
                         modelFilename = name
+                        if (ok) modelPath = cached else modelPath = ""
                         engineStatus = if (ok) "\u2713 $name" else "\u2717 Load failed (OOM?)"
                         if (ok) screen = Screen.CHAT
                     }
@@ -582,8 +585,27 @@ private fun AppRoot() {
                     },
                     onApply = {
                         applyConfig()
-                        engineStatus = if (modelLoaded) "Settings applied \u2713"
-                            else "Settings saved (load model first)"
+                        if (modelLoaded && modelPath.isNotEmpty()) {
+                            scope.launch(Dispatchers.IO) {
+                                withContext(Dispatchers.Main) {
+                                    engineStatus = "Reloading model\u2026"
+                                    isLoading = true
+                                }
+                                val ok = EngineCore.loadModel(modelPath)
+                                if (ok) {
+                                    modelInfo = try { JSONObject(EngineCore.getModelInfoNative()) }
+                                        catch (_: Exception) { null }
+                                }
+                                withContext(Dispatchers.Main) {
+                                    isLoading = false
+                                    modelLoaded = ok
+                                    engineStatus = if (ok) "\u2713 Settings applied, $modelFilename"
+                                        else "\u2717 Reload failed"
+                                }
+                            }
+                        } else {
+                            engineStatus = "Settings saved (load model first)"
+                        }
                     }
                 )
 
@@ -1276,7 +1298,7 @@ private fun SettingsScreen(
             colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
         ) { Text("Apply Settings", color = Color.Black, fontWeight = FontWeight.Bold) }
 
-        Text("\u26A0 n_ctx and GPU layers require a model reload.",
+        Text("\u26A0 Apply Settings reloads the model so all changes take effect immediately.",
             fontSize = 11.sp, color = AccentAmber, fontFamily = FontFamily.Monospace)
     }
 }
