@@ -1,4 +1,7 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GGUFZeroCopyV4" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <style name="Theme.GGUFZeroCopyV5" parent="android:Theme.Material.NoTitleBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">#FF060A11</item>
+        <item name="android:navigationBarColor">#FF060A11</item>
+    </style>
 </resources>
