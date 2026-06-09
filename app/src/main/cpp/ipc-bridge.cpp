@@ -159,8 +159,8 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx     = g_n_ctx;
-    cparams.n_batch   = 2048;
-    cparams.n_ubatch  = 512;
+    cparams.n_batch   = 512;
+    cparams.n_ubatch  = 256;
     cparams.type_k    = GGML_TYPE_Q8_0;
     cparams.type_v    = GGML_TYPE_Q8_0;
     cparams.n_threads = g_n_threads;
