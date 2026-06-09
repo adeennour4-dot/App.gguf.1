@@ -45,19 +45,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Vulkan SDK / SPIRV-Headers
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libvulkan-dev spirv-headers 2>/dev/null || true
-          # SPIRV-Headers may not be in apt — fetch from GitHub if missing
-          if ! dpkg -l spirv-headers 2>/dev/null | grep -q .; then
-            git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Headers.git /tmp/spirv-headers
-            cd /tmp/spirv-headers
-            cmake -B build -DCMAKE_INSTALL_PREFIX=/usr
-            sudo cmake --install build
-            rm -rf /tmp/spirv-headers
-          fi
-
       - name: Install SDK / NDK / CMake
         run: |
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
@@ -104,9 +91,9 @@ jobs:
         run: |
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew assembleRelease --stacktrace --no-daemon
+            ./gradlew assembleRelease --stacktrace --no-daemon -Pggml.vulkan=false
           else
-            ./gradlew assembleDebug --stacktrace --no-daemon
+            ./gradlew assembleDebug --stacktrace --no-daemon -Pggml.vulkan=false
           fi
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false"
