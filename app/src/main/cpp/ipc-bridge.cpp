@@ -62,7 +62,6 @@ static void rebuild_sampler() {
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(g_seed));
 }
 
-// Build the full prompt string from system prompt + history + current user turn
 static std::string build_prompt(const std::string& user_msg) {
     std::vector<llama_chat_message> msgs;
     std::vector<std::string> contents;
@@ -78,8 +77,6 @@ static std::string build_prompt(const std::string& user_msg) {
     contents.push_back(user_msg);
     msgs.push_back({"user", contents.back().c_str()});
 
-    // FIX: first arg is const char* tmpl (nullptr = use model embedded template)
-    // signature: llama_chat_apply_template(tmpl, msgs, n_msg, add_ass, buf, buf_size)
     std::vector<char> buf(8192 * 4);
     int n = llama_chat_apply_template(nullptr,
                                       msgs.data(), msgs.size(),
@@ -203,9 +200,7 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(
 
     rebuild_sampler();
 
-    // FIX: llama_kv_cache_seq_rm(ctx, seq_id, p0, p1)
-    // seq_id=-1 means all sequences, p0=0, p1=-1 means entire range
-    llama_kv_cache_seq_rm(g_ctx, -1, 0, -1);
+    llama_kv_cache_clear(g_ctx);
 
     std::string fullPrompt = build_prompt(userMsg);
     LOGI("Prompt built, len=%zu", fullPrompt.size());
@@ -271,8 +266,7 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_resetContextNative(
     JNIEnv*, jobject)
 {
     g_history.clear();
-    // FIX: same replacement for all kv cache clears
-    if (g_ctx) llama_kv_cache_seq_rm(g_ctx, -1, 0, -1);
+    if (g_ctx) llama_kv_cache_clear(g_ctx);
     if (g_buf) { g_buf->write_pos = 0; g_buf->flags = 1; g_buf->tokens_gen = 0; }
     LOGI("Context reset.");
 }
@@ -301,7 +295,6 @@ JNIEXPORT jstring JNICALL Java_com_gguf_ipc_EngineCore_getModelInfoNative(
     std::ostringstream json;
     json << "{";
 
-    // FIX: llama_model_desc now requires 3 args: (model, buf, buf_size)
     char desc_buf[256];
     llama_model_desc(g_model, desc_buf, sizeof(desc_buf));
     json << "\"description\":\"" << desc_buf << "\",";
@@ -337,8 +330,7 @@ JNIEXPORT jstring JNICALL Java_com_gguf_ipc_EngineCore_benchmarkNative(
 {
     if (!g_ctx || !g_model) return env->NewStringUTF("{\"pp_tps\":0,\"tg_tps\":0}");
 
-    // FIX: replace llama_kv_cache_clear with llama_kv_cache_seq_rm
-    llama_kv_cache_seq_rm(g_ctx, -1, 0, -1);
+    llama_kv_cache_clear(g_ctx);
     rebuild_sampler();
 
     auto vocab = llama_model_get_vocab(g_model);
@@ -365,8 +357,7 @@ JNIEXPORT jstring JNICALL Java_com_gguf_ipc_EngineCore_benchmarkNative(
     auto t3 = std::chrono::high_resolution_clock::now();
     double tg_sec = std::chrono::duration<double>(t3 - t2).count();
 
-    // FIX: replace llama_kv_cache_clear with llama_kv_cache_seq_rm
-    llama_kv_cache_seq_rm(g_ctx, -1, 0, -1);
+    llama_kv_cache_clear(g_ctx);
 
     char out[128];
     snprintf(out, sizeof(out), "{\"pp_tps\":%.1f,\"tg_tps\":%.1f}",
