@@ -88,7 +88,7 @@ data class ChatMessage(
 )
 
 private enum class Screen(val label: String, val icon: ImageVector, val filledIcon: ImageVector) {
-    CHAT("Chat", Icons.Outlined.Chat, Icons.Filled.Chat),
+    CHAT("Chat", Icons.AutoMirrored.Outlined.Chat, Icons.AutoMirrored.Filled.Chat),
     MODELS("Models", Icons.Outlined.Memory, Icons.Filled.Memory),
     SETTINGS("Settings", Icons.Outlined.Tune, Icons.Filled.Tune),
     INFO("Info", Icons.Outlined.Info, Icons.Filled.Info),
