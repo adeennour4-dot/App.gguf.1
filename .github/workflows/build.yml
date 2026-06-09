@@ -3,71 +3,120 @@ name: Build APK
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false"
+  ANDROID_SDK_VERSION: "36"
+  NDK_VERSION: "29.0.14206865"
+  CMAKE_VERSION: "3.22.1"
+  JAVA_VERSION: "17"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v5
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
-          # Note: do NOT set cache: gradle here — setup-gradle below owns caching.
+          cache: gradle
 
-      # gradle/actions v6 is the current release (March 2026).
-      # cache-provider: basic uses the MIT-licensed actions/cache path,
-      # which is free for all repos (public and private) with no data sharing.
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: wrapper   # Reads version from gradle-wrapper.properties (9.5.1)
-          cache-provider: basic     # Open-source caching path; no proprietary telemetry
-
-      # android-actions/setup-android@v4 is still current as of June 2026
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install SDK platform + build tools + NDK r29 + CMake
+      - name: Install Vulkan SDK / SPIRV-Headers
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan-dev spirv-headers 2>/dev/null || true
+          # SPIRV-Headers may not be in apt — fetch from GitHub if missing
+          if ! dpkg -l spirv-headers 2>/dev/null | grep -q .; then
+            git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Headers.git /tmp/spirv-headers
+            cd /tmp/spirv-headers
+            cmake -B build -DCMAKE_INSTALL_PREFIX=/usr
+            sudo cmake --install build
+            rm -rf /tmp/spirv-headers
+          fi
+
+      - name: Install SDK / NDK / CMake
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager --install \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;29.0.14206865" \
-            "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+            "platforms;android-${{ env.ANDROID_SDK_VERSION }}" \
+            "build-tools;${{ env.ANDROID_SDK_VERSION }}.0.0" \
+            "ndk;${{ env.NDK_VERSION }}" \
+            "cmake;${{ env.CMAKE_VERSION }}"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
 
       - name: Write local.properties
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "android.ndkVersion=$ANDROID_HOME/ndk/29.0.14206865" >> local.properties
+          cat > local.properties << EOF
+          sdk.dir=$ANDROID_HOME
+          ndk.dir=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}
+          EOF
 
-      - name: Cache CMake deps (llama.cpp FetchContent)
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+            gradle-
+
+      - name: Cache CMake / llama.cpp (FetchContent)
         uses: actions/cache@v4
         with:
           path: |
             app/.cxx
             app/build/_deps
-          key: cmake-deps-b9542-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
-          restore-keys: cmake-deps-b9542-
+          key: cmake-${{ runner.os }}-ndk${{ env.NDK_VERSION }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt', 'app/build.gradle.kts') }}
+          restore-keys: |
+            cmake-${{ runner.os }}-ndk${{ env.NDK_VERSION }}-
+            cmake-${{ runner.os }}-
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+      - name: Build ${{ github.event.inputs.build_type || 'debug' }} APK
+        run: |
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          if [ "$BUILD_TYPE" = "release" ]; then
+            ./gradlew assembleRelease --stacktrace --no-daemon
+          else
+            ./gradlew assembleDebug --stacktrace --no-daemon
+          fi
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GGUF-ZeroCopy-v5-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: GGUF-ZeroCopy-${{ github.event.inputs.build_type || 'debug' }}-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
           retention-days: 30
-
