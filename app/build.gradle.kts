@@ -1,7 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")          // ← FIXED: was missing, Kotlin files wouldn't compile
-    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
