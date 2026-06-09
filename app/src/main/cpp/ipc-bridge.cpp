@@ -85,7 +85,7 @@ static std::string build_prompt(const std::string& user_msg) {
 
     // Apply template (nullptr = use model's embedded template)
     std::vector<char> buf(8192 * 4);
-    int n = llama_chat_apply_template(g_model,
+    int n = llama_chat_apply_template(nullptr,
                                       msgs.data(), msgs.size(),
                                       true, buf.data(), (int)buf.size());
     if (n > 0 && n < (int)buf.size()) {
@@ -214,7 +214,7 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(
     rebuild_sampler();
 
     // FIX: Clear KV cache before each turn — avoids stale context / OOM crash
-    llama_kv_self_clear(g_ctx);
+    llama_kv_self_clear(g_ctx, -1, -1, -1);
 
     // Build full conversation prompt
     std::string fullPrompt = build_prompt(userMsg);
