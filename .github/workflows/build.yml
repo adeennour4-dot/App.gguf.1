@@ -59,7 +59,7 @@ jobs:
         run: |
           cat > local.properties << EOF
           sdk.dir=$ANDROID_HOME
-          ndk.dir=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}
+          android.ndkVersion=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}
           EOF
 
       - name: Cache Gradle
