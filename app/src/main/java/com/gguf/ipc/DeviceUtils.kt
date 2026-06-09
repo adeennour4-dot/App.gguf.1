@@ -180,6 +180,8 @@ object DeviceUtils {
     }
 
     private fun calculateSuggestedThreads(cores: Int, isBigLittle: Boolean): Int {
+        // Exynos 2200: 1x X2 + 3x A710 big cores → 4 threads avoids little-core bottleneck
+        if (isExynos()) return 4
         if (isBigLittle) return (cores * 0.75f).toInt().coerceIn(2, 12)
         return (cores * 0.85f).toInt().coerceIn(2, 16)
     }

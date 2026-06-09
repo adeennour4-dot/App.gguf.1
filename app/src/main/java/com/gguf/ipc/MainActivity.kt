@@ -166,6 +166,7 @@ private fun AppRoot() {
     var freqPenStr   by remember { mutableStateOf("0.0") }
     var presPenStr   by remember { mutableStateOf("0.0") }
     var sysPrompt    by remember { mutableStateOf("You are a helpful, concise assistant running on-device. Respond clearly and directly.") }
+    var deepThink    by remember { mutableStateOf(false) }
 
     // CPU / device info
     var cpuInfo  by remember { mutableStateOf<DeviceUtils.CpuInfo?>(null) }
@@ -498,6 +499,8 @@ private fun AppRoot() {
                     isInferring  = isInferring,
                     isLoading    = isLoading,
                     modelLoaded  = modelLoaded,
+                    deepThink    = deepThink,
+                    onDeepThinkChange = { deepThink = it },
                     promptInput  = promptInput,
                     sessionName  = chatManager.currentSession?.name ?: "Chat",
                     sessionCount = chatManager.allSessions.size,
@@ -507,7 +510,11 @@ private fun AppRoot() {
                             val userMsg = ChatMessage(Role.USER, promptInput)
                             chatHistory.add(userMsg)
                             chatManager.addMessage(userMsg)
-                            val msg = promptInput
+                            val msg = if (deepThink) {
+                                promptInput + "\n\nThink step by step before answering. Show your reasoning in <reasoning> tags, then give the final answer."
+                            } else {
+                                promptInput
+                            }
                             promptInput = ""
                             streamedText = ""
                             isInferring = true
@@ -573,6 +580,7 @@ private fun AppRoot() {
                     freqPenStr = freqPenStr, onFreqPenChange = { freqPenStr = it },
                     presPenStr = presPenStr, onPresPenChange = { presPenStr = it },
                     sysPrompt = sysPrompt, onSysPromptChange = { sysPrompt = it },
+                    deepThink = deepThink, onDeepThinkChange = { deepThink = it },
                     cpuInfo = cpuInfo, gpuInfo = gpuInfo,
                     onAutoDetect = { autoDetectAndApply() },
                     onImportPreset = {
@@ -734,6 +742,7 @@ private fun ChatScreen(
     streamedText: String, isInferring: Boolean, isLoading: Boolean,
     modelLoaded: Boolean, promptInput: String,
     sessionName: String, sessionCount: Int,
+    deepThink: Boolean, onDeepThinkChange: (Boolean) -> Unit,
     onPromptChange: (String) -> Unit, onSend: () -> Unit,
     onAbort: () -> Unit, onReset: () -> Unit, onCopyChat: () -> Unit,
     onNewSession: () -> Unit, onSwitchSession: (Int) -> Unit,
@@ -759,7 +768,15 @@ private fun ChatScreen(
 
             if (isInferring && streamedText.isNotEmpty()) {
                 item(key = "streaming") {
-                    StreamingBubble(streamedText)
+                    Column {
+                        if (deepThink) {
+                            Text("\uD83E\uDDD0 Deep Thinking\u2026",
+                                fontSize = 10.sp, color = AccentAmber,
+                                modifier = Modifier.padding(start = 48.dp, bottom = 2.dp),
+                                fontFamily = FontFamily.Monospace)
+                        }
+                        StreamingBubble(streamedText)
+                    }
                 }
             }
 
@@ -834,6 +851,12 @@ private fun ChatScreen(
                         enabled = chatHistory.isNotEmpty(),
                         colors  = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
                     ) { Text("\u2398 Copy", fontSize = 11.sp) }
+                    OutlinedButton(
+                        onClick = { onDeepThinkChange(!deepThink) },
+                        enabled = !isInferring,
+                        colors  = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (deepThink) AccentCyan else TextMuted)
+                    ) { Text(if (deepThink) "\uD83E\uDDD0 Think" else "\uD83E\uDDE0 Ask", fontSize = 11.sp) }
                 }
             }
         }
@@ -1193,6 +1216,7 @@ private fun SettingsScreen(
     freqPenStr: String, onFreqPenChange: (String) -> Unit,
     presPenStr: String, onPresPenChange: (String) -> Unit,
     sysPrompt: String, onSysPromptChange: (String) -> Unit,
+    deepThink: Boolean, onDeepThinkChange: (Boolean) -> Unit,
     cpuInfo: DeviceUtils.CpuInfo?, gpuInfo: DeviceUtils.GpuInfo?,
     onAutoDetect: () -> Unit, onImportPreset: () -> Unit, onApply: () -> Unit
 ) {
@@ -1271,6 +1295,23 @@ private fun SettingsScreen(
                 fontSize = 12.sp, fontFamily = FontFamily.Monospace
             )
         )
+
+        SettingsHeader("Reasoning")
+        SettingsCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Deep Think", fontSize = 13.sp, color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold)
+                    Text("Chain-of-thought reasoning for complex problems",
+                        fontSize = 11.sp, color = TextSecond)
+                }
+                Switch(
+                    checked = deepThink,
+                    onCheckedChange = onDeepThinkChange,
+                    colors = SwitchDefaults.colors(checkedThumbColor = AccentCyan)
+                )
+            }
+        }
 
         SettingsHeader("Quick Presets")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
