@@ -1,100 +1,82 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+GGUF ZeroCopy v5 PRO
+On-Device Inference, Re-engineered.
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+GGUF ZeroCopy is a high-performance, production-ready inference engine for Android. Using a zero-copy shared memory architecture, it delivers real-time LLM responses with minimal latency and maximum hardware utilization.
+🚀 What’s New in v5 PRO
 
-   1. Definitions.
+    ⚡ Extreme Performance: Upgraded to llama.cpp b9542 with LLVM ThinLTO and DotProd acceleration.
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+    🧠 KV-Cache Quantization: New Q8_0 Cache Quantization allows you to store 2x more context (16k+) in the same RAM footprint.
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+    🌌 Glassmorphic Cyber-UI: A futuristic, high-contrast interface with real-time TPS (Tokens Per Second) telemetry and smooth glass-effect surfaces.
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+    🚀 Vulkan Unified Memory: Direct GPU-memory mapping for ultra-low latency response streaming.
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+    🛠️ Robust Foundation: Upgraded to Gradle 9.5.1, NDK r29, and Compose BOM 2026.05.00.
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+🏗️ Architecture Overview
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+The "Zero-Copy" advantage comes from a shared-memory circular buffer between the native engine and the JVM.
+code Mermaid
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+graph LR
+    subgraph "Native C++ (llama.cpp b9542)"
+        Engine[Engine Core]
+        KV[Q8_0 KV-Cache]
+    end
+    
+    Engine -- "Mapped Shared Memory (512KB)" --> UI
+    
+    subgraph "Kotlin/Compose (Android UI)"
+        UI[Glassmorphic UI]
+        Telemetry[Real-time TPS Meter]
+    end
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+🛠️ Build Specs
+Component	Version
+Gradle	9.5.1 (with retry-logic)
+AGP	9.1.1
+NDK	29.0.14206865
+llama.cpp	b9542 (June 2026)
+Compose BOM	2026.05.00
+🚀 Quick Setup
+1. Build Requirements
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+Ensure you have the latest Android Studio (Ladybug or newer) and the NDK r29 installed via the SDK Manager.
+2. CI/CD Deployment
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+This project includes a production-grade GitHub Action. To trigger a build:
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+    Push your changes.
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+    The setup-gradle@v4 action will automatically handle caching and dependency synchronization, bypassing standard network timeouts.
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+⚙️ Configuration Reference
+Setting	Optimal Value	Description
+n_ctx	8192	Context window size
+n_gpu_layers	99	Forces full Vulkan offload
+cparams.type_k	Q8_0	KV-Cache quantization (Pro Feature)
+optimization	ThinLTO	Enables cross-module function inlining
+📱 The PRO UI Features
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+    Real-time Telemetry: See your actual T/S (Tokens Per Second) calculated in real-time within the native bridge.
 
-      (b) You must cause any modified files to carry prominent notices
+    KV-Fill Monitoring: A sleek, glowing progress bar tracks your context window usage.
+
+    Glassmorphic Output: A high-end, semi-transparent text area designed for high-density reading.
+
+    Pro-Exec Button: One-tap inference start with hardware-accelerated feedback.
+
+📜 License
+
+Copyright © 2026 GGUF ZeroCopy Engine. Built for power users.
+Pro-Tips for Optimization:
+
+    Vulkan Stability: If your device crashes during boot, ensure your driver supports Vulkan 1.3.
+
+    Memory Management: Always load your model via the ACTION_OPEN_DOCUMENT picker to allow the engine to map the file descriptor directly into memory (the "Zero-Copy" path).
+
+    Build Faster: If running locally, use ./gradlew assembleDebug --parallel --offline to utilize your local Gradle cache
           stating that You changed the files; and
 
       (c) You must retain, in the Source form of any Derivative Works
