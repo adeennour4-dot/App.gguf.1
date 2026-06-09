@@ -150,7 +150,6 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     cparams.type_k    = GGML_TYPE_Q8_0;
     cparams.type_v    = GGML_TYPE_Q8_0;
     cparams.n_threads = g_n_threads;
-    cparams.seed      = g_seed;
 
     g_ctx = llama_init_from_model(g_model, cparams);
     if (!g_ctx) {
@@ -259,7 +258,10 @@ Java_com_gguf_ipc_EngineCore_abortInferenceNative(JNIEnv*, jobject) {
 
 JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_resetContextNative(JNIEnv*, jobject) {
-    if (g_ctx) llama_kv_cache_seq_rm(g_ctx, 0, -1, -1);
+    if (g_ctx) {
+        auto mem = llama_get_memory(g_ctx);
+        llama_memory_seq_rm(mem, 0, -1, -1);
+    }
     if (g_buf) {
         g_buf->write_pos  = 0;
         g_buf->flags      = 0;
@@ -289,11 +291,22 @@ JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_EngineCore_getModelInfoNative(JNIEnv* env, jobject) {
     if (!g_model) return env->NewStringUTF("{}");
 
+    char desc_buf[256];
+    llama_model_desc(g_model, desc_buf, sizeof(desc_buf));
+
+    uint64_t model_size = llama_model_size(g_model);
+    char size_buf[64];
+    if (model_size > 1073741824ULL)
+        snprintf(size_buf, sizeof(size_buf), "%.2f GB", (double)model_size / 1073741824.0);
+    else if (model_size > 1048576ULL)
+        snprintf(size_buf, sizeof(size_buf), "%.2f MB", (double)model_size / 1048576.0);
+    else
+        snprintf(size_buf, sizeof(size_buf), "%llu B", (unsigned long long)model_size);
+
     char buf[2048];
-    int n = snprintf(buf, sizeof(buf),
+    snprintf(buf, sizeof(buf),
         "{"
         "\"desc\":\"%s\","
-        "\"type\":\"%s\","
         "\"n_params\":%lld,"
         "\"n_layer\":%d,"
         "\"n_embd\":%d,"
@@ -302,14 +315,13 @@ Java_com_gguf_ipc_EngineCore_getModelInfoNative(JNIEnv* env, jobject) {
         "\"size\":\"%s\","
         "\"n_gpu_layers\":%d"
         "}",
-        llama_model_desc(g_model),
-        llama_model_type_name(g_model),
+        desc_buf,
         (long long)llama_model_n_params(g_model),
         llama_model_n_layer(g_model),
         llama_model_n_embd(g_model),
         llama_model_n_head(g_model),
         llama_model_n_ctx_train(g_model),
-        llama_model_size(g_model),
+        size_buf,
         g_n_gpu_layers
     );
     return env->NewStringUTF(buf);
@@ -334,7 +346,10 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     // Warmup
     llama_batch batch = llama_batch_get_one(dummy.data(), (int)dummy.size());
     llama_decode(g_ctx, batch);
-    llama_kv_cache_seq_rm(g_ctx, 0, -1, -1);
+    {
+        auto mem = llama_get_memory(g_ctx);
+        llama_memory_seq_rm(mem, 0, -1, -1);
+    }
 
     // Timed PP
     auto pp_start = std::chrono::high_resolution_clock::now();
@@ -357,7 +372,10 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     double tg_tps = (tg_ms > 0.0) ? (double)tgTokens / (tg_ms / 1000.0) : 0.0;
 
     // Clean up
-    llama_kv_cache_seq_rm(g_ctx, 0, -1, -1);
+    {
+        auto mem = llama_get_memory(g_ctx);
+        llama_memory_seq_rm(mem, 0, -1, -1);
+    }
 
     char result[512];
     snprintf(result, sizeof(result),
