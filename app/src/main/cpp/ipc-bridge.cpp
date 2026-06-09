@@ -7,12 +7,53 @@
 #include <cstring>
 #include <chrono>
 #include <ctime>
+#include <sched.h>
 #include <android/log.h>
 #include "llama.h"
 
 #define TAG "GGUF_PRO_V5"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+// ── Big core pinning: keep llama threads off little cores ──
+static int g_big_core_count = 0;
+static cpu_set_t g_big_mask;
+
+static void detect_big_cores() {
+    if (g_big_core_count > 0) return;
+    CPU_ZERO(&g_big_mask);
+    int n = sysconf(_SC_NPROCESSORS_CONF);
+    for (int i = 0; i < n; i++) {
+        char path[128];
+        snprintf(path, sizeof(path),
+            "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", i);
+        FILE *f = fopen(path, "r");
+        if (f) {
+            int khz = 0;
+            if (fscanf(f, "%d", &khz) == 1 && khz >= 2000000) {
+                CPU_SET(i, &g_big_mask);
+                g_big_core_count++;
+            }
+            fclose(f);
+        }
+    }
+    LOGI("Detected %d big cores", g_big_core_count);
+}
+
+static void pin_to_big_cores() {
+    detect_big_cores();
+    if (g_big_core_count == 0) return;
+    sched_setaffinity(0, sizeof(g_big_mask), &g_big_mask);
+}
+
+static void pin_to_all_cores() {
+    detect_big_cores();
+    int n = sysconf(_SC_NPROCESSORS_CONF);
+    cpu_set_t all;
+    CPU_ZERO(&all);
+    for (int i = 0; i < n; i++) CPU_SET(i, &all);
+    sched_setaffinity(0, sizeof(all), &all);
+}
 
 // ── Shared memory layout ──
 static constexpr size_t HEADER_SIZE = 16;
@@ -161,10 +202,10 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     cparams.n_ctx     = g_n_ctx;
     cparams.n_batch   = 512;
     cparams.n_ubatch  = 256;
-    cparams.type_k    = GGML_TYPE_Q8_0;
-    cparams.type_v    = GGML_TYPE_Q8_0;
+    cparams.type_k    = GGML_TYPE_Q4_0;
+    cparams.type_v    = GGML_TYPE_Q4_0;
     cparams.n_threads = g_n_threads;
-    cparams.n_threads_batch = g_n_threads;
+    cparams.n_threads_batch = g_n_threads + 2;
 
     g_ctx = llama_init_from_model(g_model, cparams);
     if (!g_ctx) {
@@ -221,7 +262,9 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
         return;
     }
 
-    // Eval prompt — use aggregate init to avoid uninit fields in llama_batch_get_one
+    // Phase 1: Prompt eval — use ALL cores for compute-bound batch
+    pin_to_all_cores();
+    llama_set_n_threads(g_ctx, g_n_threads + 2, g_n_threads + 4);
     {
         llama_batch batch = { n_toks, tokens.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
         if (llama_decode(g_ctx, batch) != 0) {
@@ -230,6 +273,10 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
             return;
         }
     }
+
+    // Phase 2: Generation — pin to BIG cores only for memory-bound decode
+    pin_to_big_cores();
+    llama_set_n_threads(g_ctx, g_n_threads, g_n_threads);
 
     g_buf->flags |= FLAG_ACTIVE;
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -364,10 +411,11 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
 
     // Dummy tokens for PP
     std::vector<llama_token> dummy((size_t)ppTokens, bos);
-
     int n_dummy = (int)dummy.size();
 
-    // Warmup
+    // Warmup — all cores
+    pin_to_all_cores();
+    llama_set_n_threads(g_ctx, g_n_threads + 2, g_n_threads + 4);
     {
         llama_batch batch = { n_dummy, dummy.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
         llama_decode(g_ctx, batch);
@@ -377,7 +425,8 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
         llama_memory_seq_rm(mem, 0, -1, -1);
     }
 
-    // Timed PP
+    // Timed PP — all cores
+    pin_to_all_cores();
     auto pp_start = std::chrono::high_resolution_clock::now();
     {
         llama_batch batch = { n_dummy, dummy.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
@@ -387,7 +436,9 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     double pp_ms = std::chrono::duration<double, std::milli>(pp_end - pp_start).count();
     double pp_tps = (pp_ms > 0.0) ? (double)ppTokens / (pp_ms / 1000.0) : 0.0;
 
-    // Timed TG
+    // Timed TG — big cores only
+    pin_to_big_cores();
+    llama_set_n_threads(g_ctx, g_n_threads, g_n_threads);
     auto tg_start = std::chrono::high_resolution_clock::now();
     llama_token last = bos;
     for (int i = 0; i < tgTokens; i++) {
