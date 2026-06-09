@@ -176,7 +176,6 @@ JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(
     cparams.n_ctx             = g_n_ctx;
     cparams.n_threads         = g_n_threads;
     cparams.n_threads_batch   = g_n_threads;
-    cparams.flash_attn        = true;
     // 8-bit KV quantization — saves ~50% VRAM on long contexts
     cparams.type_k = GGML_TYPE_Q8_0;
     cparams.type_v = GGML_TYPE_Q8_0;
