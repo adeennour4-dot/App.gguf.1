@@ -23,7 +23,7 @@ android {
                 arguments(
                     "-DANDROID_STL=c++_shared",
                     "-DGGML_VULKAN=${if (vulkan) "ON" else "OFF"}",
-                    "-DGGML_VULKAN_MEMORY_MODEL=2",
+                    "-DGGML_VULKAN_MEMORY_MODEL=0",
                     "-DGGML_OPENMP=OFF"
                 )
                 abiFilters += "arm64-v8a"
