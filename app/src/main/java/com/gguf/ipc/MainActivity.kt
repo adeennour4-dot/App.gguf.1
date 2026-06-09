@@ -1,4 +1,4 @@
-package com.gguf.ipc
+herepackage com.gguf.ipc
 
 import android.app.Activity
 import android.content.ClipData
@@ -1038,7 +1038,7 @@ fun BenchCard(label: String, value: String, unit: String) {
             Text(value, fontSize = 30.sp, fontWeight = FontWeight.Black,
                 color = AccentCyan, fontFamily = FontFamily.Monospace)
             Text(unit,  fontSize = 10.sp, color = TextSecond)
-            Spacer(Modifier.hei.ght(4.dp))
+            Spacer(Modifier.height(4.dp))
             Text(label, fontSize = 11.sp, color = TextPrimary, textAlign = TextAlign.Center)
         }
     }
