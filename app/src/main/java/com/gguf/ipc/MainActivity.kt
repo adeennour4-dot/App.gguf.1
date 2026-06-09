@@ -133,6 +133,7 @@ private fun AppRoot() {
     val listState   = rememberLazyListState()
     val clipManager = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     val chatManager = remember { ChatManager(ctx) }
+    val snackbar    = remember { SnackbarHostState() }
 
     // ── State ──
     var screen          by remember { mutableStateOf(Screen.CHAT) }
@@ -155,8 +156,8 @@ private fun AppRoot() {
     var renameText      by remember { mutableStateOf("") }
 
     // ── Settings state ──
-    var nCtxStr      by remember { mutableStateOf("8192") }
-    var maxTokStr    by remember { mutableStateOf("4096") }
+    var nCtxStr      by remember { mutableStateOf("2048") }
+    var maxTokStr    by remember { mutableStateOf("1024") }
     var tempStr      by remember { mutableStateOf("0.7") }
     var topPStr      by remember { mutableStateOf("0.9") }
     var minPStr      by remember { mutableStateOf("0.05") }
@@ -165,7 +166,7 @@ private fun AppRoot() {
     var repPenStr    by remember { mutableStateOf("1.1") }
     var freqPenStr   by remember { mutableStateOf("0.0") }
     var presPenStr   by remember { mutableStateOf("0.0") }
-    var sysPrompt    by remember { mutableStateOf("You are a helpful, concise assistant running on-device. Respond clearly and directly.") }
+    var sysPrompt    by remember { mutableStateOf("You are a helpful, concise assistant. Answer immediately and directly without thinking, reasoning, or chain-of-thought unless the user explicitly asks for step-by-step. Be brief and get to the point.") }
     var deepThink    by remember { mutableStateOf(false) }
 
     // CPU / device info
@@ -242,7 +243,6 @@ private fun AppRoot() {
                             tokensPerSec = finalTps, tokenCount = finalToks)
                         chatHistory.add(msg)
                         chatManager.addMessage(msg)
-                        // Auto-name session on first response
                         val session = chatManager.currentSession
                         if (session != null && session.name == "New Chat") {
                             chatManager.renameSession(session.id, session.autoName())
@@ -279,6 +279,7 @@ private fun AppRoot() {
                         withContext(Dispatchers.Main) {
                             engineStatus = "Failed to copy model file"
                             isLoading = false
+                            scope.launch { snackbar.showSnackbar("Failed to copy model file") }
                         }
                         return@launch
                     }
@@ -295,7 +296,12 @@ private fun AppRoot() {
                         modelFilename = name
                         if (ok) modelPath = cached else modelPath = ""
                         engineStatus = if (ok) "\u2713 $name" else "\u2717 Load failed (OOM?)"
-                        if (ok) screen = Screen.CHAT
+                        if (ok) {
+                            screen = Screen.CHAT
+                            scope.launch { snackbar.showSnackbar("Model loaded: $name") }
+                        } else {
+                            scope.launch { snackbar.showSnackbar("Load failed \u2014 not enough memory?") }
+                        }
                     }
                 }
             }
@@ -325,9 +331,11 @@ private fun AppRoot() {
                         json.optString("system_prompt", "").takeIf { it.isNotEmpty() }?.let { sysPrompt = it }
                         applyConfig()
                         engineStatus = "Preset loaded \u2713"
+                        scope.launch { snackbar.showSnackbar("Preset imported successfully") }
                     }
                 } catch (e: Exception) {
                     engineStatus = "\u2717 Failed to load preset"
+                    scope.launch { snackbar.showSnackbar("Failed to load preset") }
                 }
             }
         }
@@ -340,7 +348,7 @@ private fun AppRoot() {
             containerColor = BgCard,
             titleContentColor = AccentCyan,
             textContentColor = TextPrimary,
-            title = { Text("Rename Chat") },
+            title = { Text("Rename Chat", fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = renameText, onValueChange = { renameText = it },
@@ -357,10 +365,10 @@ private fun AppRoot() {
                 TextButton(onClick = {
                     chatManager.renameSession(renameDialogId!!, renameText)
                     renameDialogId = null
-                }) { Text("Rename", color = AccentCyan) }
+                }) { Text("Rename", color = AccentCyan, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { renameDialogId = null }) { Text("Cancel", color = TextMuted) }
+                TextButton(onClick = { renameDialogId = null }) { Text("Cancel") }
             }
         )
     }
@@ -371,13 +379,14 @@ private fun AppRoot() {
             onDismissRequest = { showSessionMenu = false },
             containerColor = BgCard,
             titleContentColor = AccentCyan,
-            title = { Text("Chat Sessions") },
+            title = { Text("Chat Sessions", fontWeight = FontWeight.Bold) },
             text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
                     items(chatManager.allSessions) { session ->
                         val isCurrent = session.id == chatManager.currentSessionId
                         Surface(
                             modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
                                 .clickable {
                                     if (!isCurrent) {
                                         chatManager.switchTo(session.id)
@@ -385,37 +394,58 @@ private fun AppRoot() {
                                     }
                                     showSessionMenu = false
                                 },
-                            color = if (isCurrent) AccentCyan.copy(alpha = 0.08f) else Color.Transparent,
-                            shape = RoundedCornerShape(8.dp)
+                            color = if (isCurrent) AccentCyan.copy(alpha = 0.1f) else Color.Transparent,
+                            shape = RoundedCornerShape(10.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    if (isCurrent) Icons.Filled.Forum else Icons.Outlined.Forum,
-                                    contentDescription = null,
-                                    tint = if (isCurrent) AccentCyan else TextSecond,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(Modifier.width(10.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isCurrent) AccentCyan.copy(alpha = 0.15f) else BgInput
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Forum,
+                                        contentDescription = null,
+                                        tint = if (isCurrent) AccentCyan else TextMuted,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(session.name, fontSize = 13.sp, color = TextPrimary,
+                                    Text(session.name, fontSize = 14.sp, color = TextPrimary,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${session.messages.size} msgs",
-                                        fontSize = 10.sp, color = TextMuted)
+                                    Row {
+                                        Text("${session.messages.size} msgs",
+                                            fontSize = 11.sp, color = TextMuted)
+                                        if (isCurrent) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("current", fontSize = 11.sp, color = AccentCyan,
+                                                fontFamily = FontFamily.Monospace)
+                                        }
+                                    }
                                 }
                                 IconButton(onClick = {
                                     renameText = session.name
                                     renameDialogId = session.id
                                     showSessionMenu = false
                                 }) {
-                                    Icon(Icons.Outlined.Edit, null, tint = TextMuted,
-                                        modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Outlined.Edit, "Rename", tint = TextMuted,
+                                        modifier = Modifier.size(18.dp))
                                 }
-                                IconButton(onClick = { chatManager.deleteSession(session.id) }) {
-                                    Icon(Icons.Outlined.Delete, null, tint = AccentRed,
-                                        modifier = Modifier.size(16.dp))
+                                IconButton(onClick = {
+                                    chatManager.deleteSession(session.id)
+                                    loadChatSession()
+                                }) {
+                                    Icon(Icons.Outlined.Delete, "Delete", tint = AccentRed,
+                                        modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -428,9 +458,10 @@ private fun AppRoot() {
                                 loadChatSession()
                                 showSessionMenu = false
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
-                        ) { Text("+ New Chat", color = Color.Black) }
+                        ) { Text("+ New Session", color = Color.Black, fontWeight = FontWeight.Bold) }
                     }
                 }
             },
@@ -441,6 +472,7 @@ private fun AppRoot() {
     // ── Layout ──
     Scaffold(
         containerColor = BgDeep,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             AppTopBar(
                 engineStatus = engineStatus,
@@ -459,13 +491,14 @@ private fun AppRoot() {
                     modelPicker.launch(intent)
                 },
                 onSessions  = { showSessionMenu = true },
-                onSettings  = { }
+                onSettings  = { screen = Screen.SETTINGS }
             )
         },
         bottomBar = {
             NavigationBar(
-                containerColor = BgSurface,
-                contentColor   = AccentCyan
+                containerColor = BgSurface.copy(alpha = 0.95f),
+                contentColor   = AccentCyan,
+                tonalElevation = 0.dp
             ) {
                 Screen.entries.forEach { s ->
                     NavigationBarItem(
@@ -474,10 +507,11 @@ private fun AppRoot() {
                         icon     = {
                             Icon(
                                 if (screen == s) s.filledIcon else s.icon,
-                                contentDescription = s.label
+                                contentDescription = s.label,
+                                modifier = Modifier.size(22.dp)
                             )
                         },
-                        label    = { Text(s.label, fontSize = 11.sp) },
+                        label    = { Text(s.label, fontSize = 11.sp, fontWeight = if (screen == s) FontWeight.Bold else FontWeight.Normal) },
                         colors   = NavigationBarItemDefaults.colors(
                             selectedIconColor = AccentCyan,
                             selectedTextColor = AccentCyan,
@@ -511,7 +545,7 @@ private fun AppRoot() {
                             chatHistory.add(userMsg)
                             chatManager.addMessage(userMsg)
                             val msg = if (deepThink) {
-                                promptInput + "\n\nThink step by step before answering. Show your reasoning in <reasoning> tags, then give the final answer."
+                                promptInput + "\n\nThink step by step before answering. Show your reasoning in <think> tags, then give the final answer."
                             } else {
                                 promptInput
                             }
@@ -530,6 +564,7 @@ private fun AppRoot() {
                         chatHistory.clear()
                         streamedText = ""
                         engineStatus = "Context reset \u2713"
+                        scope.launch { snackbar.showSnackbar("Chat reset") }
                     },
                     onCopyChat = {
                         val sb = StringBuilder()
@@ -538,6 +573,7 @@ private fun AppRoot() {
                             sb.append("[$tag] ${m.content}\n\n")
                         }
                         clipManager.setPrimaryClip(ClipData.newPlainText("Chat", sb.toString()))
+                        scope.launch { snackbar.showSnackbar("Chat copied to clipboard") }
                     },
                     onNewSession = {
                         chatManager.createSession()
@@ -609,10 +645,15 @@ private fun AppRoot() {
                                     modelLoaded = ok
                                     engineStatus = if (ok) "\u2713 Settings applied, $modelFilename"
                                         else "\u2717 Reload failed"
+                                    scope.launch {
+                                        if (ok) snackbar.showSnackbar("Settings applied, model reloaded")
+                                        else snackbar.showSnackbar("Model reload failed")
+                                    }
                                 }
                             }
                         } else {
                             engineStatus = "Settings saved (load model first)"
+                            scope.launch { snackbar.showSnackbar("Settings saved \u2014 load a model to apply") }
                         }
                     }
                 )
@@ -638,6 +679,7 @@ private fun AppRoot() {
                                 withContext(Dispatchers.Main) {
                                     benchResult = raw
                                     isBenching = false
+                                    scope.launch { snackbar.showSnackbar("Benchmark complete") }
                                 }
                             }
                         }
@@ -659,23 +701,38 @@ private fun AppTopBar(
     Surface(color = BgSurface, shadowElevation = 2.dp) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Hub,
+                    contentDescription = null,
+                    tint = AccentCyan,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("GGUF ZC v5",
+                        Text("GGUF",
                             fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
                             color = AccentCyan, fontSize = 16.sp)
+                        Text(" ZC v6",
+                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Light,
+                            color = AccentCyan.copy(alpha = 0.6f), fontSize = 16.sp)
                         Spacer(Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .background(AccentCyan.copy(alpha = 0.12f))
                                 .clickable { onSessions() }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
-                            Text(sessionName,
-                                color = AccentCyan, fontSize = 9.sp,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 120.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Forum, null,
+                                    tint = AccentCyan, modifier = Modifier.size(10.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(sessionName,
+                                    color = AccentCyan, fontSize = 9.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 100.dp))
+                            }
                         }
                     }
                     Text(engineStatus,
@@ -690,29 +747,35 @@ private fun AppTopBar(
                         StatChip("TPS", "${"%.1f".format(tokensPerSec)}", AccentAmber)
                 }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onLoadModel,
                     enabled = !isLoading && !isInferring,
-                    modifier = Modifier.height(32.dp),
+                    modifier = Modifier.height(34.dp),
+                    shape = RoundedCornerShape(8.dp),
                     colors  = ButtonDefaults.buttonColors(
                         containerColor = if (modelLoaded) BgCard else AccentCyan)
                 ) {
                     Text(
                         when { isLoading -> "Loading\u2026"
-                            modelLoaded -> "\u27F3 Swap"
+                            modelLoaded -> "\u21C4 Swap Model"
                             else -> "\uD83D\uDCC2 Load GGUF" },
                         color = if (modelLoaded) AccentCyan else Color.Black,
-                        fontSize = 11.sp
+                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold
                     )
                 }
                 if (isInferring) {
                     Button(
                         onClick = { EngineCore.abortInferenceNative() },
-                        modifier = Modifier.height(32.dp),
+                        modifier = Modifier.height(34.dp),
+                        shape = RoundedCornerShape(8.dp),
                         colors   = ButtonDefaults.buttonColors(containerColor = AccentRed)
-                    ) { Text("\u25A0 Stop", fontSize = 11.sp, color = Color.White) }
+                    ) { Text("\u25A0 Stop", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White) }
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onSettings, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Settings, "Settings", tint = TextSecond, modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -770,10 +833,22 @@ private fun ChatScreen(
                 item(key = "streaming") {
                     Column {
                         if (deepThink) {
-                            Text("\uD83E\uDDD0 Deep Thinking\u2026",
-                                fontSize = 10.sp, color = AccentAmber,
-                                modifier = Modifier.padding(start = 48.dp, bottom = 2.dp),
-                                fontFamily = FontFamily.Monospace)
+                            Row(
+                                modifier = Modifier.padding(start = 48.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(AccentAmber)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("\uD83E\uDDD0 Thinking\u2026",
+                                    fontSize = 10.sp, color = AccentAmber,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.SemiBold)
+                            }
                         }
                         StreamingBubble(streamedText)
                     }
@@ -783,7 +858,7 @@ private fun ChatScreen(
             if (isLoading) {
                 item {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -791,7 +866,7 @@ private fun ChatScreen(
                             modifier = Modifier.size(18.dp),
                             color = AccentCyan, strokeWidth = 2.dp
                         )
-                        Spacer(Modifier.width(10.dp))
+                        Spacer(Modifier.width(12.dp))
                         Text("Loading model\u2026", color = TextSecond, fontSize = 13.sp)
                     }
                 }
@@ -822,41 +897,72 @@ private fun ChatScreen(
                         cursorColor          = AccentCyan
                     ),
                     maxLines = 4,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { onSend() })
                 )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = if (isInferring) onAbort else onSend,
-                        enabled = modelLoaded && !isLoading &&
-                            (isInferring || promptInput.isNotBlank()),
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isInferring) AccentRed else AccentCyan)
-                    ) {
-                        Text(
-                            if (isInferring) "\u25A0 Stop" else "\u25B6 Send",
-                            color = Color.Black, fontWeight = FontWeight.Bold
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = onReset,
-                        enabled = modelLoaded && !isInferring,
-                        colors  = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
-                    ) { Text("\u21BA Reset", fontSize = 11.sp) }
-                    OutlinedButton(
-                        onClick = onCopyChat,
-                        enabled = chatHistory.isNotEmpty(),
-                        colors  = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
-                    ) { Text("\u2398 Copy", fontSize = 11.sp) }
-                    OutlinedButton(
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Deep Think toggle
+                    IconButton(
                         onClick = { onDeepThinkChange(!deepThink) },
                         enabled = !isInferring,
-                        colors  = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (deepThink) AccentCyan else TextMuted)
-                    ) { Text(if (deepThink) "\uD83E\uDDD0 Think" else "\uD83E\uDDE0 Ask", fontSize = 11.sp) }
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            if (deepThink) Icons.Filled.Psychology else Icons.Outlined.Psychology,
+                            "Deep Think",
+                            tint = if (deepThink) AccentAmber else TextMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    if (deepThink) {
+                        Text("Deep Think", fontSize = 10.sp, color = AccentAmber,
+                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    Spacer(Modifier.weight(1f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(
+                            onClick = onReset,
+                            enabled = modelLoaded && !isInferring,
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.5f)),
+                            colors  = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
+                        ) { Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(14.dp)) }
+                        OutlinedButton(
+                            onClick = onCopyChat,
+                            enabled = chatHistory.isNotEmpty(),
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, TextMuted.copy(alpha = 0.5f)),
+                            colors  = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
+                        ) { Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(14.dp)) }
+                        Button(
+                            onClick = if (isInferring) onAbort else onSend,
+                            enabled = modelLoaded && !isLoading &&
+                                (isInferring || promptInput.isNotBlank()),
+                            modifier = Modifier.height(40.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isInferring) AccentRed else AccentCyan)
+                        ) {
+                            Icon(
+                                if (isInferring) Icons.Filled.Stop else Icons.Filled.Send,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (isInferring) "Stop" else "Send",
+                                color = Color.Black, fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -866,37 +972,65 @@ private fun ChatScreen(
 @Composable
 private fun WelcomeCard() {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(24.dp))
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(88.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.sweepGradient(listOf(AccentCyan, AccentPurple, AccentGreen, AccentCyan))
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text("AI", fontSize = 24.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(BgDeep),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Hub, null, tint = AccentCyan, modifier = Modifier.size(36.dp))
+            }
         }
+        Spacer(Modifier.height(20.dp))
+                        Text("GGUF ZeroCopy v6",
+                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                            color = AccentCyan, fontSize = 22.sp)
+        Spacer(Modifier.height(4.dp))
+        Text("On-Device LLM Inference Engine",
+            color = AccentPurple, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         Spacer(Modifier.height(16.dp))
-        Text("GGUF ZeroCopy v5",
-            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-            color = AccentCyan, fontSize = 20.sp)
-        Spacer(Modifier.height(8.dp))
         Text("Load a .gguf model to start chatting",
             color = TextSecond, fontSize = 13.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(4.dp))
-        Text("Vulkan GPU \u00B7 Zero-copy IPC \u00B7 Q8_0 KV-Cache",
+        Text("Zero-copy IPC \u00B7 Vulkan GPU \u00B7 Q8_0 KV-Cache",
             color = TextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        Spacer(Modifier.height(24.dp))
+        Surface(
+            modifier = Modifier.widthIn(max = 280.dp),
+            color = BgCard,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.Lightbulb, null, tint = AccentAmber, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Tap the \uD83D\uDCC2 button above or go to Models to load a GGUF file",
+                    color = TextSecond, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+        }
     }
 }
 
 @Composable
 private fun MessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
     val isUser = msg.role == Role.USER
+    var showCopied by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -914,13 +1048,27 @@ private fun MessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
                         bottomStart = 16.dp, bottomEnd = 16.dp
                     ))
                     .background(if (isUser) UserBubble else BotBubble)
-                    .clickable { onCopy(msg.content) }
+                    .clickable {
+                        onCopy(msg.content)
+                        showCopied = true
+                    }
                     .padding(12.dp)
             ) {
-                if (isUser) {
-                    Text(msg.content, color = TextPrimary, fontSize = 14.sp, lineHeight = 20.sp)
-                } else {
-                    AssistantContent(msg.content)
+                Column {
+                    if (isUser) {
+                        Text(msg.content, color = TextPrimary, fontSize = 14.sp, lineHeight = 20.sp)
+                    } else {
+                        AssistantContent(msg.content)
+                    }
+                    AnimatedVisibility(visible = showCopied) {
+                        Text("Copied", fontSize = 9.sp, color = AccentGreen,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(top = 4.dp))
+                        LaunchedEffect(showCopied) {
+                            delay(1500)
+                            showCopied = false
+                        }
+                    }
                 }
             }
             Row(
@@ -979,7 +1127,7 @@ private fun AssistantContent(text: String) {
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("\uD83E\uDDE0", fontSize = 12.sp)
+                        Icon(Icons.Filled.Psychology, null, tint = AccentPurple, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(if (expanded) "Hide reasoning" else "Show reasoning",
                             fontSize = 11.sp, color = AccentPurple,
@@ -1031,8 +1179,13 @@ private fun StreamingBubble(text: String) {
         ) {
             Column {
                 RichTextContent(text)
-                Spacer(Modifier.width(4.dp))
-                Text("\u258A", color = AccentCyan.copy(alpha = alpha), fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("\u258A", color = AccentCyan.copy(alpha = alpha), fontSize = 14.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("generating\u2026", color = TextMuted, fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace)
+                }
             }
         }
     }
@@ -1077,65 +1230,89 @@ private fun ModelsScreen(
     val scroll = rememberScrollState()
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Model Manager", fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 16.sp)
+            fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 18.sp)
 
         Button(
             onClick = onLoadModel,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
-        ) { Text("\uD83D\uDCC2 Load GGUF Model", color = Color.Black, fontWeight = FontWeight.Bold) }
+        ) {
+            Icon(Icons.Filled.FolderOpen, null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Load GGUF Model", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
 
         // Quick device info card
-        Surface(color = BgCard, shape = RoundedCornerShape(12.dp)) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text("Device Auto-Detect", fontWeight = FontWeight.SemiBold,
-                    color = AccentCyan, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                Spacer(Modifier.height(8.dp))
+        Surface(
+            color = BgCard,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Memory, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Device Auto-Detect", fontWeight = FontWeight.SemiBold,
+                        color = AccentCyan, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+                }
+                Spacer(Modifier.height(12.dp))
                 if (cpuInfo != null) {
                     InfoRow("CPU Cores", "${cpuInfo.cores}")
-                    InfoRow("Arch", cpuInfo.architecture)
-                    InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes" else "No")
+                    InfoRow("Architecture", cpuInfo.architecture)
+                    InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes \u2014 AATS enabled" else "No")
                     InfoRow("Max Freq", "${cpuInfo.maxFrequencyMHz} MHz")
-                    InfoRow("Suggested", "${cpuInfo.suggestedThreads}t ${cpuInfo.suggestedGpuLayers}GL")
+                    InfoRow("Suggested", "${cpuInfo.suggestedThreads}t / ${cpuInfo.suggestedGpuLayers}GL")
                 } else {
                     Text("Tap 'Auto-Detect' to scan your device",
                         fontSize = 12.sp, color = TextSecond)
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = onAutoDetect,
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.5f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
-                ) { Text("\u2699 Auto-Detect & Configure", fontSize = 12.sp) }
+                ) { Text("\u2699 Auto-Detect & Configure", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
             }
         }
 
         if (!modelLoaded) {
-            Box(modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+            Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
                 contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("\uD83E\uDD16", fontSize = 48.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Text("No model loaded", color = TextSecond, fontSize = 14.sp)
+                    Icon(Icons.Filled.SmartToy, null, tint = TextMuted, modifier = Modifier.size(56.dp))
+                    Spacer(Modifier.height(16.dp))
+                    Text("No model loaded", color = TextSecond, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Text("Tap the button above to select a .gguf file",
                         color = TextMuted, fontSize = 12.sp)
                 }
             }
         } else {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = BgCard)
+            Surface(
+                color = BgCard,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Loaded Model", fontWeight = FontWeight.SemiBold,
-                        color = AccentCyan, fontSize = 14.sp)
-                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Description, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Loaded Model", fontWeight = FontWeight.SemiBold,
+                            color = AccentCyan, fontSize = 14.sp)
+                    }
+                    Spacer(Modifier.height(12.dp))
                     InfoRow("File", modelFilename)
                     InfoRow("Status", engineStatus)
                     if (modelInfo != null) {
+                        HorizontalDivider(
+                            color = Color(0xFF2A2F3E),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
                         val keys = modelInfo.keys()
                         while (keys.hasNext()) {
                             val k = keys.next()
@@ -1146,37 +1323,52 @@ private fun ModelsScreen(
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = BgCard)
+            Surface(
+                color = BgCard,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.1f))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Architecture", fontWeight = FontWeight.SemiBold,
-                        color = AccentCyan, fontSize = 14.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Architecture, null, tint = AccentPurple, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Architecture", fontWeight = FontWeight.SemiBold,
+                            color = AccentPurple, fontSize = 14.sp)
+                    }
                     Spacer(Modifier.height(8.dp))
                     Text("ASharedMemory ring buffer\n" +
                         "write_pos(4) | flags(4) | tokens_gen(4) | tps_scaled(4) | data(512KB)\n\n" +
                         "C++ ipc-bridge writes tokens as UTF-8 into data region.\n" +
                         "Kotlin polls isInferenceDone() every 80ms.\n" +
-                        "Q8_0 KV-Cache quantization for 2x context density.",
+                        "Q8_0 KV-Cache quantization for 2x context density.\n" +
+                        "AATS: adaptive thread scaling for big.LITTLE CPUs.",
                         fontSize = 11.sp, color = TextSecond, fontFamily = FontFamily.Monospace,
                         lineHeight = 18.sp)
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = BgCard)
+            Surface(
+                color = BgCard,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.1f))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Device", fontWeight = FontWeight.SemiBold,
-                        color = AccentCyan, fontSize = 14.sp)
-                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.DevicesOther, null, tint = AccentGreen, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Device", fontWeight = FontWeight.SemiBold,
+                            color = AccentGreen, fontSize = 14.sp)
+                    }
+                    Spacer(Modifier.height(12.dp))
                     InfoRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
                     InfoRow("Android", "${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE})")
                     val ram = (Runtime.getRuntime().totalMemory() / 1048576)
                     InfoRow("RAM (App)", "${ram} MB")
                     if (cpuInfo != null) {
+                        HorizontalDivider(
+                            color = Color(0xFF2A2F3E),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
                         InfoRow("CPU Cores", "${cpuInfo.cores}")
                         InfoRow("Features", cpuInfo.features.take(4).joinToString(" "))
                     }
@@ -1195,7 +1387,7 @@ private fun ModelsScreen(
 
 @Composable
 private fun InfoRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Text(label, fontSize = 12.sp, color = TextSecond, modifier = Modifier.weight(1f))
         Text(value, fontSize = 12.sp, color = TextPrimary,
             fontFamily = FontFamily.Monospace)
@@ -1223,12 +1415,15 @@ private fun SettingsScreen(
     val scroll = rememberScrollState()
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // CPU Detection Card
         SettingsHeader("Device & Performance")
-        Surface(color = BgCard, shape = RoundedCornerShape(12.dp)) {
-            Column(modifier = Modifier.padding(14.dp),
+        Surface(
+            color = BgCard,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (cpuInfo != null) {
                     InfoRow("CPU", "${cpuInfo.cores} cores | ${cpuInfo.architecture}")
@@ -1236,6 +1431,7 @@ private fun SettingsScreen(
                         InfoRow("Part", cpuInfo.cpuPartNames.joinToString(" "))
                     InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes \u2014 auto-tuned" else "No")
                     InfoRow("Max Freq", "${cpuInfo.maxFrequencyMHz} MHz")
+                    HorizontalDivider(color = Color(0xFF2A2F3E))
                     InfoRow("Threads", "${cpuInfo.suggestedThreads} (suggested)")
                     InfoRow("GPU Layers", "${cpuInfo.suggestedGpuLayers} (suggested)")
                     if (cpuInfo.features.isNotEmpty())
@@ -1244,14 +1440,18 @@ private fun SettingsScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = onAutoDetect,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.5f)),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
-                    ) { Text("\u26A1 Auto-Detect", fontSize = 11.sp) }
+                    ) { Text("\u26A1 Auto-Detect", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                     OutlinedButton(
                         onClick = onImportPreset,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.5f)),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
-                    ) { Text("\uD83D\uDCC2 Import Preset", fontSize = 11.sp) }
+                    ) { Text("\uD83D\uDCC2 Import Preset", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 }
             }
         }
@@ -1271,7 +1471,7 @@ private fun SettingsScreen(
             SettingField("Min-P", "0\u20131.0", minPStr, onMinPChange)
         }
 
-        SettingsHeader("Repetition Penalties")
+        SettingsHeader("Repetition Penalty")
         SettingsCard {
             SettingField("Repeat Penalty", "1.0=off", repPenStr, onRepPenChange)
             SettingField("Frequency Penalty", "0.0=off", freqPenStr, onFreqPenChange)
@@ -1284,6 +1484,7 @@ private fun SettingsScreen(
             onValueChange = onSysPromptChange,
             modifier = Modifier.fillMaxWidth(),
             maxLines = 5,
+            shape = RoundedCornerShape(12.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = AccentCyan,
                 unfocusedBorderColor = Color(0xFF334155),
@@ -1297,10 +1498,24 @@ private fun SettingsScreen(
         )
 
         SettingsHeader("Reasoning")
-        SettingsCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            color = BgCard,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, if (deepThink) AccentAmber.copy(alpha = 0.3f) else Color(0xFF2A2F3E))
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (deepThink) Icons.Filled.Psychology else Icons.Outlined.Psychology,
+                    null,
+                    tint = if (deepThink) AccentAmber else TextMuted,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Deep Think", fontSize = 13.sp, color = TextPrimary,
+                    Text("Deep Think", fontSize = 14.sp, color = TextPrimary,
                         fontWeight = FontWeight.SemiBold)
                     Text("Chain-of-thought reasoning for complex problems",
                         fontSize = 11.sp, color = TextSecond)
@@ -1308,7 +1523,10 @@ private fun SettingsScreen(
                 Switch(
                     checked = deepThink,
                     onCheckedChange = onDeepThinkChange,
-                    colors = SwitchDefaults.colors(checkedThumbColor = AccentCyan)
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = AccentAmber,
+                        checkedTrackColor = AccentAmber.copy(alpha = 0.3f)
+                    )
                 )
             }
         }
@@ -1327,26 +1545,43 @@ private fun SettingsScreen(
                         onTempChange(v.second)
                         onSysPromptChange(v.third)
                     },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.4f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
-                ) { Text(label, fontSize = 10.sp) }
+                ) { Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) }
             }
         }
 
         Button(
             onClick = onApply,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
-        ) { Text("Apply Settings", color = Color.Black, fontWeight = FontWeight.Bold) }
+        ) {
+            Icon(Icons.Filled.Check, null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Apply Settings", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
 
-        Text("\u26A0 Apply Settings reloads the model so all changes take effect immediately.",
-            fontSize = 11.sp, color = AccentAmber, fontFamily = FontFamily.Monospace)
+        Surface(
+            color = AccentAmber.copy(alpha = 0.08f),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Row(modifier = Modifier.padding(12.dp)) {
+                Icon(Icons.Filled.Info, null, tint = AccentAmber, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Apply Settings reloads the model so all changes take effect immediately.",
+                    fontSize = 11.sp, color = AccentAmber, fontFamily = FontFamily.Monospace,
+                    lineHeight = 16.sp)
+            }
+        }
     }
 }
 
 @Composable
 private fun SettingsHeader(title: String) {
-    Text(title, fontSize = 13.sp, color = AccentCyan,
+    Text(title, fontSize = 14.sp, color = AccentCyan,
         fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
 }
 
@@ -1355,10 +1590,10 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = BgCard,
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(14.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
             content()
         }
     }
@@ -1367,11 +1602,16 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun SettingField(label: String, hint: String, value: String, onChange: (String) -> Unit) {
     Column {
-        Text(label, fontSize = 12.sp, color = TextSecond, fontWeight = FontWeight.Medium)
-        Text(hint, fontSize = 10.sp, color = TextMuted)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 13.sp, color = TextPrimary, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.width(8.dp))
+            Text(hint, fontSize = 10.sp, color = TextMuted, fontFamily = FontFamily.Monospace)
+        }
+        Spacer(Modifier.height(4.dp))
         OutlinedTextField(
             value = value, onValueChange = onChange,
             modifier = Modifier.fillMaxWidth(), singleLine = true,
+            shape = RoundedCornerShape(10.dp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = AccentCyan,
@@ -1381,7 +1621,7 @@ private fun SettingField(label: String, hint: String, value: String, onChange: (
                 cursorColor = AccentCyan
             ),
             textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 13.sp, fontFamily = FontFamily.Monospace
+                fontSize = 14.sp, fontFamily = FontFamily.Monospace
             )
         )
     }
@@ -1397,16 +1637,16 @@ private fun InfoScreen(
     val scroll = rememberScrollState()
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scroll),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Device & Model Info", fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 16.sp)
+            fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 18.sp)
 
-        // CPU/Device info
         InfoCard("Device") {
             InfoRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
             InfoRow("Android", "${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE})")
             if (cpuInfo != null) {
+                HorizontalDivider(color = Color(0xFF2A2F3E), modifier = Modifier.padding(vertical = 6.dp))
                 InfoRow("CPU Cores", "${cpuInfo.cores}")
                 InfoRow("Architecture", cpuInfo.architecture)
                 InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes" else "No")
@@ -1415,10 +1655,12 @@ private fun InfoScreen(
                     InfoRow("Features", cpuInfo.features.joinToString(" "))
             }
             if (gpuInfo != null) {
+                HorizontalDivider(color = Color(0xFF2A2F3E), modifier = Modifier.padding(vertical = 6.dp))
                 InfoRow("GPU", gpuInfo.renderer)
                 InfoRow("Vendor", gpuInfo.vendor)
                 InfoRow("Vulkan", if (gpuInfo.hasVulkan) "Available" else "N/A")
             }
+            HorizontalDivider(color = Color(0xFF2A2F3E), modifier = Modifier.padding(vertical = 6.dp))
             val ram = (Runtime.getRuntime().totalMemory() / 1048576)
             InfoRow("RAM (App)", "${ram} MB")
         }
@@ -1426,7 +1668,7 @@ private fun InfoScreen(
         if (!modelLoaded) {
             Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
                 contentAlignment = Alignment.Center) {
-                Text("Load a model to see more information", color = TextSecond)
+                Text("Load a model to see more information", color = TextSecond, fontSize = 13.sp)
             }
             return
         }
@@ -1455,17 +1697,26 @@ private fun InfoScreen(
             InfoRow("KV Cache", "Q8_0 quantization (2x density)")
             InfoRow("IPC", "Zero-copy shared memory")
             InfoRow("GPU", "Vulkan Unified Memory")
+            InfoRow("Threading", "AATS (Adaptive Asymmetric Thread Scaling)")
         }
     }
 }
 
 @Composable
 private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(color = BgCard, shape = RoundedCornerShape(12.dp)) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(title, fontSize = 13.sp, color = AccentCyan,
-                fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.height(8.dp))
+    Surface(
+        color = BgCard,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Info, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(title, fontSize = 14.sp, color = AccentCyan,
+                    fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+            }
+            Spacer(Modifier.height(10.dp))
             content()
         }
     }
@@ -1484,20 +1735,21 @@ private fun BenchScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text("Performance Benchmark", color = AccentCyan,
-            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Text("Measures prompt-processing (PP) and token-generation (TG) speed.",
-            color = TextSecond, fontSize = 12.sp, textAlign = TextAlign.Center)
+            color = TextSecond, fontSize = 13.sp, textAlign = TextAlign.Center)
 
         Button(
             onClick = onRunBench,
             enabled = modelLoaded && !isBenching,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
         ) {
             if (isBenching) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp),
+                CircularProgressIndicator(modifier = Modifier.size(18.dp),
                     color = Color.Black, strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(10.dp))
             }
             Text(if (isBenching) "Benchmarking\u2026" else "\u25B6 Run Benchmark (PP=512, TG=128)",
                 color = Color.Black, fontWeight = FontWeight.Bold)
@@ -1526,8 +1778,12 @@ private fun BenchScreen(
                     "${"%.0f".format(tgMs)} ms")
             }
         } else if (benchResult.isNotEmpty()) {
-            Surface(color = BgCard, shape = RoundedCornerShape(12.dp)) {
-                Text(benchResult, modifier = Modifier.padding(12.dp),
+            Surface(
+                color = BgCard,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
+            ) {
+                Text(benchResult, modifier = Modifier.padding(16.dp),
                     color = TextPrimary, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
         }
@@ -1539,14 +1795,15 @@ private fun BenchCard(title: String, value: String, subtitle: String) {
     Surface(
         color  = BgCard,
         shape  = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.15f)),
         modifier = Modifier.width(150.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp),
+        Column(modifier = Modifier.padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+            Text(value, fontSize = 30.sp, fontWeight = FontWeight.Bold,
                 color = AccentCyan, fontFamily = FontFamily.Monospace)
-            Text(subtitle, fontSize = 11.sp, color = TextSecond)
-            Spacer(Modifier.height(4.dp))
+            Text(subtitle, fontSize = 12.sp, color = TextSecond)
+            Spacer(Modifier.height(6.dp))
             Text(title, fontSize = 12.sp, color = TextPrimary,
                 textAlign = TextAlign.Center, lineHeight = 16.sp)
         }

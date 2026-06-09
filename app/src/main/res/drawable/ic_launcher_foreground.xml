@@ -4,56 +4,42 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Glow ring -->
+    <!-- Outer glow -->
     <path
-        android:fillColor="#002244"
-        android:pathData="M54,18A36,36 0,1 1,18,54A36,36 0,1 1,54,18z" />
+        android:fillColor="#1A3A5C"
+        android:pathData="M54,10A44,44 0,1 1,10,54A44,44 0,1 1,54,10z" />
+    <!-- Gradient ring -->
     <path
         android:fillColor="#22D3EE"
-        android:pathData="M54,22A32,32 0,1 1,22,54A32,32 0,1 1,54,22z"
-        android:fillAlpha="0.15" />
+        android:pathData="M54,14A40,40 0,1 1,14,54A40,40 0,1 1,54,14z"
+        android:fillAlpha="0.12" />
     <!-- Outer ring -->
     <path
         android:strokeColor="#22D3EE"
         android:strokeWidth="2.5"
         android:fillColor="#00000000"
-        android:pathData="M54,26A28,28 0,1 1,26,54A28,28 0,1 1,54,26z" />
-    <!-- Inner ring -->
-    <path
-        android:strokeColor="#A78BFA"
-        android:strokeWidth="2"
-        android:fillColor="#00000000"
-        android:strokeAlpha="0.6"
-        android:pathData="M54,32A22,22 0,1 1,32,54A22,22 0,1 1,54,32z" />
-    <!-- Central chip / hexagon -->
+        android:pathData="M54,18A36,36 0,1 1,18,54A36,36 0,1 1,54,18z" />
+    <!-- Brain/nodes icon -->
     <path
         android:fillColor="#22D3EE"
-        android:pathData="M54,38L64,44L64,56L54,62L44,56L44,44Z"
-        android:fillAlpha="0.9" />
-    <!-- Inner hexagon -->
+        android:fillAlpha="0.9"
+        android:pathData="M54,30C45,30 38,36 38,44C38,48 40,52 43,54L40,66L50,60C51,60 52,60 54,60C63,60 70,53 70,44C70,36 63,30 54,30Z" />
+    <!-- Inner brain -->
     <path
         android:fillColor="#080C14"
-        android:pathData="M54,42L60,45.5L60,52.5L54,56L48,52.5L48,45.5Z" />
-    <!-- G letter in center -->
-    <path
-        android:fillColor="#22D3EE"
-        android:pathData="M52,46h6v1h-5v4h4v-1.5h-1.5v-1H58V52h-6z" />
-    <!-- Neural dots top -->
-    <path android:fillColor="#34D399" android:pathData="M36,30m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <path android:fillColor="#34D399" android:pathData="M54,28m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <path android:fillColor="#34D399" android:pathData="M72,30m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <!-- Neural dots bottom -->
-    <path android:fillColor="#FBBF24" android:pathData="M36,78m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <path android:fillColor="#FBBF24" android:pathData="M54,80m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <path android:fillColor="#FBBF24" android:pathData="M72,78m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+        android:pathData="M54,34C48,34 43,38 43,44C43,47 44,50 47,52L45,60L52,56C53,56 53,56 54,56C60,56 65,51 65,44C65,38 60,34 54,34Z" />
+    <!-- Neural nodes -->
+    <path android:fillColor="#34D399" android:pathData="M36,38m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <path android:fillColor="#34D399" android:pathData="M54,28m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <path android:fillColor="#34D399" android:pathData="M72,38m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <path android:fillColor="#A78BFA" android:pathData="M36,68m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <path android:fillColor="#A78BFA" android:pathData="M72,68m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <path android:fillColor="#FBBF24" android:pathData="M54,76m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
     <!-- Neural connections -->
-    <path android:strokeColor="#34D399" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6" android:pathData="M36,30L44,44" />
-    <path android:strokeColor="#34D399" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6" android:pathData="M54,28L54,38" />
-    <path android:strokeColor="#34D399" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6" android:pathData="M72,30L64,44" />
-    <path android:strokeColor="#FBBF24" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6" android:pathData="M36,78L44,62" />
-    <path android:strokeColor="#FBBF24" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6" android:pathData="M54,80L54,62" />
-    <path android:strokeColor="#FBBF24" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6" android:pathData="M72,78L64,62" />
-    <!-- Side dots -->
-    <path android:fillColor="#A78BFA" android:pathData="M26,54m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
-    <path android:fillColor="#A78BFA" android:pathData="M82,54m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
+    <path android:strokeColor="#34D399" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6"
+        android:pathData="M36,38L43,44M54,28L51,34M72,38L65,44" />
+    <path android:strokeColor="#A78BFA" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6"
+        android:pathData="M36,68L47,56M72,68L61,56" />
+    <path android:strokeColor="#FBBF24" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6"
+        android:pathData="M54,76L54,60" />
 </vector>

@@ -11,7 +11,7 @@
 #include <android/log.h>
 #include "llama.h"
 
-#define TAG "GGUF_PRO_V5"
+#define TAG "GGUF_PRO_V6"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
@@ -88,8 +88,8 @@ static std::atomic<bool> g_abort{false};
 static bool              g_context_active = false;
 
 // ── Config store ──
-static int    g_n_ctx        = 8192;
-static int    g_max_tokens   = 4096;
+static int    g_n_ctx        = 2048;
+static int    g_max_tokens   = 1024;
 static float  g_temperature  = 0.7f;
 static float  g_top_p        = 0.9f;
 static float  g_min_p        = 0.05f;
@@ -246,7 +246,7 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
     else
         full_prompt = input;
 
-    std::vector<llama_token> tokens(8192);
+    std::vector<llama_token> tokens(4096);
     int n_toks = llama_tokenize(
         vocab, full_prompt.data(), (int)full_prompt.size(),
         tokens.data(), (int)tokens.size(), true, false);
@@ -264,7 +264,7 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
 
     // Phase 1: Prompt eval — use ALL cores for compute-bound batch
     pin_to_all_cores();
-    llama_set_n_threads(g_ctx, g_n_threads + 2, g_n_threads + 4);
+    llama_set_n_threads(g_ctx, g_n_threads, g_n_threads + 4);
     {
         llama_batch batch = { n_toks, tokens.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
         if (llama_decode(g_ctx, batch) != 0) {
@@ -284,7 +284,7 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
     // Generation loop
     char piece[256];
     int generated = 0;
-    int limit = g_max_tokens < 2048 ? g_max_tokens : 2048;
+    int limit = g_max_tokens < 1024 ? g_max_tokens : 1024;
 
     for (int i = 0; i < limit; i++) {
         if (g_abort) break;
@@ -407,7 +407,7 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
 
     auto vocab   = llama_model_get_vocab(g_model);
     auto bos     = llama_vocab_bos(vocab);
-    auto sampler = g_sampler;
+    // Use the benchmark-specific sampler so g_sampler is undisturbed
 
     // Dummy tokens for PP
     std::vector<llama_token> dummy((size_t)ppTokens, bos);
@@ -415,7 +415,7 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
 
     // Warmup — all cores
     pin_to_all_cores();
-    llama_set_n_threads(g_ctx, g_n_threads + 2, g_n_threads + 4);
+    llama_set_n_threads(g_ctx, g_n_threads, g_n_threads + 4);
     {
         llama_batch batch = { n_dummy, dummy.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
         llama_decode(g_ctx, batch);
@@ -427,6 +427,7 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
 
     // Timed PP — all cores
     pin_to_all_cores();
+    llama_set_n_threads(g_ctx, g_n_threads, g_n_threads + 4);
     auto pp_start = std::chrono::high_resolution_clock::now();
     {
         llama_batch batch = { n_dummy, dummy.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
@@ -439,12 +440,18 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     // Timed TG — big cores only
     pin_to_big_cores();
     llama_set_n_threads(g_ctx, g_n_threads, g_n_threads);
+    // Rebuild sampler with a fixed seed for reproducible benchmarks
+    uint32_t bench_seed = 42;
+    auto bench_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(bench_sampler, llama_sampler_init_min_p(g_min_p, 1));
+    llama_sampler_chain_add(bench_sampler, llama_sampler_init_temp(g_temperature));
+    llama_sampler_chain_add(bench_sampler, llama_sampler_init_dist(bench_seed));
     auto tg_start = std::chrono::high_resolution_clock::now();
     llama_token last = bos;
     for (int i = 0; i < tgTokens; i++) {
         llama_batch b = { 1, &last, nullptr, nullptr, nullptr, nullptr, nullptr };
         if (llama_decode(g_ctx, b) != 0) break;
-        last = llama_sampler_sample(sampler, g_ctx, -1);
+        last = llama_sampler_sample(bench_sampler, g_ctx, -1);
     }
     auto tg_end = std::chrono::high_resolution_clock::now();
     double tg_ms = std::chrono::duration<double, std::milli>(tg_end - tg_start).count();
@@ -455,6 +462,8 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
         auto mem = llama_get_memory(g_ctx);
         llama_memory_seq_rm(mem, 0, -1, -1);
     }
+
+    llama_sampler_free(bench_sampler);
 
     char result[512];
     snprintf(result, sizeof(result),
