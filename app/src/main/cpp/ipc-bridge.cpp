@@ -284,7 +284,7 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_resetContextNative(
     JNIEnv*, jobject)
 {
     g_history.clear();
-    if (g_ctx) llama_kv_cache_clear(g_ctx);
+    if (g_ctx) llama_kv_self_clear(g_ctx);
     if (g_buf) { g_buf->write_pos = 0; g_buf->flags = 1; g_buf->tokens_gen = 0; }
     LOGI("Context reset.");
 }
