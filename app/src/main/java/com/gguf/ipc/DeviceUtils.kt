@@ -49,7 +49,7 @@ object DeviceUtils {
     fun detectGpu(): GpuInfo {
         val renderer = Build.MODEL
         val vendor = Build.MANUFACTURER
-        val soc = SystemProperties("ro.chipname", "unknown")
+        val soc = Build.HARDWARE
         return GpuInfo(
             renderer = renderer,
             vendor = vendor,
@@ -201,18 +201,5 @@ object DeviceUtils {
         } catch (_: Exception) { false }
     }
 
-    private object SystemProperties {
-        private val clazz by lazy {
-            try { Class.forName("android.os.SystemProperties") } catch (_: Exception) { null }
-        }
-        private val getMethod by lazy {
-            clazz?.getMethod("get", String::class.java, String::class.java)
-        }
 
-        fun get(key: String, default: String): String {
-            return try {
-                getMethod?.invoke(null, key, default) as? String ?: default
-            } catch (_: Exception) { default }
-        }
-    }
 }
