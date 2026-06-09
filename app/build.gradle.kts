@@ -16,8 +16,8 @@ android {
 
         externalNativeBuild {
             cmake {
-                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector")
-                cFlags  ("-O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector")
+                cppFlags = "-std=c++17 -O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector"
+                cFlags = "-O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector"
                 arguments(
                     "-DANDROID_STL=c++_shared",
                     "-DGGML_VULKAN=OFF",        // Requires SPIRV-Headers on host; disabled for CI
