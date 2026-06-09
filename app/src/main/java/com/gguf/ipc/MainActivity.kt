@@ -19,6 +19,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -902,11 +903,13 @@ private fun ModelsScreen(
                     InfoRow("Android", "${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE})")
                     val ram = (Runtime.getRuntime().totalMemory() / 1048576)
                     InfoRow("RAM (App)", "${ram} MB")
-                    try {
+                    val freeStorage = runCatching {
                         val stat = StatFs(Environment.getDataDirectory().path)
-                        val free = (stat.availableBytes / 1073741824)
-                        InfoRow("Free Storage", "${free} GB")
-                    } catch (_: Exception) {}
+                        stat.availableBytes / 1073741824
+                    }.getOrNull()
+                    if (freeStorage != null) {
+                        InfoRow("Free Storage", "${freeStorage} GB")
+                    }
                 }
             }
         }
