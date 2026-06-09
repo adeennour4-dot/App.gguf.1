@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstring>
 #include <chrono>
+#include <ctime>
 #include <android/log.h>
 #include "llama.h"
 
@@ -68,8 +69,9 @@ static void rebuild_sampler() {
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(g_min_p, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(g_temperature));
-    // Note: top-p/k are baked into min-p behaviour here; if a dedicated
-    // top-p sampler is wanted, add llama_sampler_init_top_p(g_top_p, 1).
+    // Terminal sampler: actually selects a token from the distribution
+    uint32_t seed = (g_seed < 0) ? (uint32_t)time(nullptr) : (uint32_t)g_seed;
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(seed));
 }
 
 static void cleanup_model() {
@@ -219,12 +221,14 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
         return;
     }
 
-    // Eval prompt
-    llama_batch batch = llama_batch_get_one(tokens.data(), n_toks);
-    if (llama_decode(g_ctx, batch) != 0) {
-        LOGE("Prompt decode failed");
-        env->ReleaseStringUTFChars(prompt, input);
-        return;
+    // Eval prompt — use aggregate init to avoid uninit fields in llama_batch_get_one
+    {
+        llama_batch batch = { n_toks, tokens.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
+        if (llama_decode(g_ctx, batch) != 0) {
+            LOGE("Prompt decode failed");
+            env->ReleaseStringUTFChars(prompt, input);
+            return;
+        }
     }
 
     g_buf->flags |= FLAG_ACTIVE;
@@ -257,7 +261,7 @@ Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstr
             }
         }
 
-        llama_batch next = llama_batch_get_one(&tok, 1);
+        llama_batch next = { 1, &tok, nullptr, nullptr, nullptr, nullptr, nullptr };
         if (llama_decode(g_ctx, next) != 0) break;
     }
 
@@ -361,9 +365,13 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     // Dummy tokens for PP
     std::vector<llama_token> dummy((size_t)ppTokens, bos);
 
+    int n_dummy = (int)dummy.size();
+
     // Warmup
-    llama_batch batch = llama_batch_get_one(dummy.data(), (int)dummy.size());
-    llama_decode(g_ctx, batch);
+    {
+        llama_batch batch = { n_dummy, dummy.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
+        llama_decode(g_ctx, batch);
+    }
     {
         auto mem = llama_get_memory(g_ctx);
         llama_memory_seq_rm(mem, 0, -1, -1);
@@ -371,8 +379,10 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
 
     // Timed PP
     auto pp_start = std::chrono::high_resolution_clock::now();
-    batch = llama_batch_get_one(dummy.data(), (int)dummy.size());
-    llama_decode(g_ctx, batch);
+    {
+        llama_batch batch = { n_dummy, dummy.data(), nullptr, nullptr, nullptr, nullptr, nullptr };
+        llama_decode(g_ctx, batch);
+    }
     auto pp_end = std::chrono::high_resolution_clock::now();
     double pp_ms = std::chrono::duration<double, std::milli>(pp_end - pp_start).count();
     double pp_tps = (pp_ms > 0.0) ? (double)ppTokens / (pp_ms / 1000.0) : 0.0;
@@ -381,7 +391,7 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     auto tg_start = std::chrono::high_resolution_clock::now();
     llama_token last = bos;
     for (int i = 0; i < tgTokens; i++) {
-        llama_batch b = llama_batch_get_one(&last, 1);
+        llama_batch b = { 1, &last, nullptr, nullptr, nullptr, nullptr, nullptr };
         if (llama_decode(g_ctx, b) != 0) break;
         last = llama_sampler_sample(sampler, g_ctx, -1);
     }
