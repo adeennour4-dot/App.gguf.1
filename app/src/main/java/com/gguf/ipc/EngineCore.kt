@@ -1,4 +1,4 @@
-herepackage com.gguf.ipc
+package com.gguf.ipc
 
 import android.app.ActivityManager
 import android.content.Context
