@@ -85,7 +85,7 @@ static std::string build_prompt(const std::string& user_msg) {
 
     // Apply template (nullptr = use model's embedded template)
     std::vector<char> buf(8192 * 4);
-    int n = llama_chat_apply_template(g_model, nullptr,
+    int n = llama_chat_apply_template(g_model,
                                       msgs.data(), msgs.size(),
                                       true, buf.data(), (int)buf.size());
     if (n > 0 && n < (int)buf.size()) {
