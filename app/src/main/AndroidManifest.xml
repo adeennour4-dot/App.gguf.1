@@ -1,14 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- ACTION_OPEN_DOCUMENT grants temporary URI access; no storage permissions needed -->
+    <!-- Storage: legacy (API ≤ 32) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Storage: modern (API 33+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- Vulkan (optional — app still runs CPU-only if absent) -->
     <uses-feature android:name="android.hardware.vulkan.level"   android:required="false" />
     <uses-feature android:name="android.hardware.vulkan.version"
-        android:version="0x00401000" android:required="false" />
+        android:version="0x00401000"
+        android:required="false" />
 
+    <!-- Allow file picker to see all file managers / document providers -->
     <queries>
-        <intent><action android:name="android.intent.action.OPEN_DOCUMENT" /></intent>
-        <intent><action android:name="android.intent.action.GET_CONTENT"    /></intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+        </intent>
     </queries>
 
     <application
@@ -16,7 +30,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
-        android:theme="@style/AppTheme"
+        android:theme="@style/Theme.GGUFZeroCopyV5"
         android:hardwareAccelerated="true"
         android:largeHeap="true">
 
@@ -30,5 +44,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
     </application>
 </manifest>

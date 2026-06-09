@@ -4,378 +4,367 @@
 #include <unistd.h>
 #include <atomic>
 #include <vector>
-#include <string>
-#include <chrono>
 #include <cstring>
-#include <sstream>
+#include <chrono>
 #include <android/log.h>
 #include "llama.h"
 
 #define TAG "GGUF_PRO_V5"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-// ─── Shared ring buffer ───────────────────────────────────────────────────────
-static constexpr size_t STREAM_SIZE = 524288; // 512 KB
+// ── Shared memory layout ──
+static constexpr size_t HEADER_SIZE = 16;
+static constexpr size_t STREAM_SIZE = 524288;
+static constexpr uint32_t FLAG_DONE   = 1;
+static constexpr uint32_t FLAG_ACTIVE = 2;
+
 struct SharedBuffer {
-    volatile uint32_t write_pos;   // offset 0
-    volatile uint32_t flags;       // offset 4  (1 = done)
-    volatile uint32_t tokens_gen;  // offset 8
-    volatile uint32_t tps_scaled;  // offset 12 (tps * 100)
-    char data[STREAM_SIZE];
+    volatile uint32_t write_pos;   // +0
+    volatile uint32_t flags;       // +4
+    volatile uint32_t tokens_gen;  // +8
+    volatile uint32_t tps_scaled;  // +12 (tokens/sec * 100)
+    char data[STREAM_SIZE - HEADER_SIZE];  // +16
 };
 
-// ─── Global state ─────────────────────────────────────────────────────────────
-static SharedBuffer*  g_buf     = nullptr;
-static llama_model*   g_model   = nullptr;
-static llama_context* g_ctx     = nullptr;
-static llama_sampler* g_sampler = nullptr;
+// ── Global state ──
+static SharedBuffer*     g_buf      = nullptr;
+static llama_model*      g_model    = nullptr;
+static llama_context*    g_ctx      = nullptr;
+static llama_sampler*    g_sampler  = nullptr;
 static std::atomic<bool> g_abort{false};
+static bool              g_context_active = false;
 
-// ─── Config globals ──────────────────────────────────────────────────────────
-static int   g_n_ctx          = 4096;
-static int   g_max_new_tokens = 2048;
-static float g_temperature    = 0.7f;
-static float g_top_p          = 0.9f;
-static float g_min_p          = 0.05f;
-static int   g_n_gpu_layers   = 0;
-static int   g_n_threads      = 4;
-static int   g_seed           = -1;
-static float g_repeat_pen     = 1.1f;
-static float g_freq_pen       = 0.0f;
-static float g_pres_pen       = 0.0f;
+// ── Config store ──
+static int    g_n_ctx        = 8192;
+static int    g_max_tokens   = 4096;
+static float  g_temperature  = 0.7f;
+static float  g_top_p        = 0.9f;
+static float  g_min_p        = 0.05f;
+static int    g_n_gpu_layers = 99;
+static int    g_n_threads    = 4;
+static int    g_seed         = -1;
+static std::string g_system_prompt;
+static float  g_repeat_penalty = 1.1f;
+static float  g_freq_penalty   = 0.0f;
+static float  g_pres_penalty   = 0.0f;
 
-// ─── Conversation history ────────────────────────────────────────────────────
-struct ChatTurn { std::string role; std::string content; };
-static std::string           g_system_prompt = "You are a helpful, concise assistant running on-device.";
-static std::vector<ChatTurn> g_history;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ── Helpers ──
 static void rebuild_sampler() {
-    if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
+    if (g_sampler) {
+        // llama_sampler_free(g_sampler);  // depends on llama.cpp version
+        g_sampler = nullptr;
+    }
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
-        -1, g_repeat_pen, g_freq_pen, g_pres_pen));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(g_min_p, 1));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(g_top_p, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(g_temperature));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(g_seed));
+    // Note: top-p/k are baked into min-p behaviour here; if a dedicated
+    // top-p sampler is wanted, add llama_sampler_init_top_p(g_top_p, 1).
 }
 
-static std::string build_prompt(const std::string& user_msg) {
-    std::vector<llama_chat_message> msgs;
-    std::vector<std::string> contents;
-
-    contents.push_back(g_system_prompt);
-    msgs.push_back({"system", contents.back().c_str()});
-
-    for (auto& turn : g_history) {
-        contents.push_back(turn.content);
-        msgs.push_back({turn.role.c_str(), contents.back().c_str()});
-    }
-
-    contents.push_back(user_msg);
-    msgs.push_back({"user", contents.back().c_str()});
-
-    std::vector<char> buf(8192 * 4);
-    int n = llama_chat_apply_template(nullptr,
-                                      msgs.data(), msgs.size(),
-                                      true, buf.data(), (int)buf.size());
-    if (n > 0 && n < (int)buf.size()) {
-        return std::string(buf.data(), n);
-    }
-
-    // Fallback: ChatML
-    std::string out;
-    out += "<|im_start|>system\n" + g_system_prompt + "<|im_end|>\n";
-    for (auto& turn : g_history) {
-        out += "<|im_start|>" + turn.role + "\n" + turn.content + "<|im_end|>\n";
-    }
-    out += "<|im_start|>user\n" + user_msg + "<|im_end|>\n";
-    out += "<|im_start|>assistant\n";
-    return out;
+static void cleanup_model() {
+    g_context_active = false;
+    if (g_sampler) { g_sampler = nullptr; }
+    if (g_ctx)      { llama_free(g_ctx);     g_ctx    = nullptr; }
+    if (g_model)    { llama_model_free(g_model); g_model = nullptr; }
 }
 
 extern "C" {
 
-// ─── Config ──────────────────────────────────────────────────────────────────
-JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_setEngineConfigNative(
-    JNIEnv*, jobject, jint nCtx, jint maxNewTokens, jfloat temp,
-    jfloat topP, jfloat minP, jint gpuLayers, jint nThreads, jint seed)
-{
-    g_n_ctx          = nCtx;
-    g_max_new_tokens = maxNewTokens;
-    g_temperature    = temp;
-    g_top_p          = topP;
-    g_min_p          = minP;
-    g_n_gpu_layers   = gpuLayers;
-    g_n_threads      = nThreads;
-    g_seed           = seed;
-    LOGI("Config: gpu=%d threads=%d ctx=%d temp=%.2f", gpuLayers, nThreads, nCtx, temp);
-}
-
-JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_setRepeatPenaltyNative(
-    JNIEnv*, jobject, jfloat r, jfloat f, jfloat p)
-{
-    g_repeat_pen = r; g_freq_pen = f; g_pres_pen = p;
-}
-
-JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_setSystemPromptNative(
-    JNIEnv* env, jobject, jstring prompt)
-{
-    const char* s = env->GetStringUTFChars(prompt, nullptr);
-    g_system_prompt = s;
-    env->ReleaseStringUTFChars(prompt, s);
-}
-
-// ─── Init ────────────────────────────────────────────────────────────────────
-JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_initializeSharedMemoryNative(
-    JNIEnv*, jobject)
-{
-    llama_backend_init();
-
+// ═══════════════════════════════════════════════════════════════════
+// Shared Memory
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT jint JNICALL
+Java_com_gguf_ipc_EngineCore_initializeSharedMemoryNative(JNIEnv*, jobject) {
+    if (g_buf) {
+        munmap((void*)g_buf, sizeof(SharedBuffer));
+        g_buf = nullptr;
+    }
     int fd = ASharedMemory_create("gguf_pro_shm", sizeof(SharedBuffer));
-    if (fd < 0) { LOGE("ASharedMemory_create failed"); return -1; }
-    g_buf = (SharedBuffer*)mmap(NULL, sizeof(SharedBuffer),
-                                PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (g_buf == MAP_FAILED) { LOGE("mmap failed"); g_buf = nullptr; return -1; }
+    if (fd < 0) return -1;
+
+    void* mapped = mmap(nullptr, sizeof(SharedBuffer),
+                        PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapped == MAP_FAILED) { close(fd); return -1; }
+
+    g_buf = (SharedBuffer*)mapped;
     memset(g_buf, 0, sizeof(SharedBuffer));
-    LOGI("Shared ring buffer created, fd=%d", fd);
     return fd;
 }
 
-// ─── Model load ──────────────────────────────────────────────────────────────
-JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_loadGgufModelNative(
-    JNIEnv* env, jobject, jstring path)
-{
-    const char* filePath = env->GetStringUTFChars(path, nullptr);
-    LOGI("Loading model: %s  gpu_layers=%d", filePath, g_n_gpu_layers);
+// ═══════════════════════════════════════════════════════════════════
+// Config
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_EngineCore_setNativeConfig(
+    JNIEnv*, jobject,
+    jint nCtx, jint maxNewTokens, jfloat temperature, jfloat topP,
+    jfloat minP, jint nGpuLayers, jint nThreads, jint seed
+) {
+    g_n_ctx        = nCtx;
+    g_max_tokens   = maxNewTokens;
+    g_temperature  = temperature;
+    g_top_p        = topP;
+    g_min_p        = minP;
+    g_n_gpu_layers = nGpuLayers;
+    g_n_threads    = nThreads;
+    g_seed         = seed;
+    LOGI("Config: ctx=%d max=%d temp=%.2f top_p=%.2f min_p=%.2f layers=%d threads=%d",
+         nCtx, maxNewTokens, temperature, topP, minP, nGpuLayers, nThreads);
+}
 
-    if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
-    if (g_ctx)     { llama_free(g_ctx);              g_ctx     = nullptr; }
-    if (g_model)   { llama_model_free(g_model);      g_model   = nullptr; }
-    g_history.clear();
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_EngineCore_setSystemPromptNative(JNIEnv* env, jobject, jstring prompt) {
+    const char* str = env->GetStringUTFChars(prompt, nullptr);
+    g_system_prompt = str ? str : "";
+    env->ReleaseStringUTFChars(prompt, str);
+}
+
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_EngineCore_setRepeatPenaltyNative(
+    JNIEnv*, jobject, jfloat rp, jfloat fp, jfloat pp
+) {
+    g_repeat_penalty = rp;
+    g_freq_penalty   = fp;
+    g_pres_penalty   = pp;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Model Loading
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT jboolean JNICALL
+Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring path) {
+    const char* filePath = env->GetStringUTFChars(path, nullptr);
+
+    cleanup_model();
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = g_n_gpu_layers;
 
     g_model = llama_model_load_from_file(filePath, mparams);
     env->ReleaseStringUTFChars(path, filePath);
-    if (!g_model) { LOGE("llama_model_load_from_file failed"); return JNI_FALSE; }
+    if (!g_model) { LOGE("Failed to load model"); return JNI_FALSE; }
 
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx           = g_n_ctx;
-    cparams.n_threads       = g_n_threads;
-    cparams.n_threads_batch = g_n_threads;
-    cparams.type_k          = GGML_TYPE_Q8_0;
-    cparams.type_v          = GGML_TYPE_Q8_0;
+    cparams.n_ctx     = g_n_ctx;
+    cparams.type_k    = GGML_TYPE_Q8_0;
+    cparams.type_v    = GGML_TYPE_Q8_0;
+    cparams.n_threads = g_n_threads;
+    cparams.seed      = g_seed;
 
     g_ctx = llama_init_from_model(g_model, cparams);
-    if (!g_ctx) { LOGE("llama_init_from_model failed"); return JNI_FALSE; }
+    if (!g_ctx) {
+        LOGE("Failed to create context");
+        llama_model_free(g_model); g_model = nullptr;
+        return JNI_FALSE;
+    }
 
     rebuild_sampler();
-
-    LOGI("Model loaded OK. ctx=%d, sampler ready.", g_n_ctx);
+    g_context_active = true;
+    LOGI("Model loaded: %s", filePath);
     return JNI_TRUE;
 }
 
-// ─── Inference ───────────────────────────────────────────────────────────────
-JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(
-    JNIEnv* env, jobject, jstring promptJ)
-{
-    if (!g_ctx || !g_buf || !g_sampler) {
-        LOGE("executeZeroCopyInference called before model loaded");
-        if (g_buf) g_buf->flags = 1;
-        return;
-    }
+// ═══════════════════════════════════════════════════════════════════
+// Inference
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(JNIEnv* env, jobject, jstring prompt) {
+    if (!g_ctx || !g_buf || !g_model) return;
 
-    const char* userInput = env->GetStringUTFChars(promptJ, nullptr);
-    std::string userMsg(userInput);
-    env->ReleaseStringUTFChars(promptJ, userInput);
+    const char* input = env->GetStringUTFChars(prompt, nullptr);
+    if (!input) return;
 
+    // Reset buffer
     g_buf->write_pos  = 0;
     g_buf->flags      = 0;
     g_buf->tokens_gen = 0;
+    g_buf->tps_scaled = 0;
     g_abort = false;
+
+    auto vocab = llama_model_get_vocab(g_model);
+
+    // Build full prompt
+    std::string full_prompt;
+    if (!g_system_prompt.empty())
+        full_prompt = g_system_prompt + "\n\nUser: " + input + "\n\nAssistant: ";
+    else
+        full_prompt = input;
+
+    std::vector<llama_token> tokens(8192);
+    int n_toks = llama_tokenize(
+        vocab, full_prompt.data(), (int)full_prompt.size(),
+        tokens.data(), (int)tokens.size(), true, false);
+    if (n_toks < 0) {
+        env->ReleaseStringUTFChars(prompt, input);
+        return;
+    }
 
     rebuild_sampler();
 
-    llama_kv_cache_clear(g_ctx);
-
-    std::string fullPrompt = build_prompt(userMsg);
-    LOGI("Prompt built, len=%zu", fullPrompt.size());
-
-    auto vocab = llama_model_get_vocab(g_model);
-    std::vector<llama_token> tokens(g_n_ctx);
-    int n_toks = llama_tokenize(vocab, fullPrompt.c_str(), (int)fullPrompt.size(),
-                                tokens.data(), g_n_ctx, true, false);
-    if (n_toks < 0) {
-        LOGE("Tokenize failed, n_toks=%d", n_toks);
-        g_buf->flags = 1;
-        return;
-    }
-
+    // Eval prompt
     llama_batch batch = llama_batch_get_one(tokens.data(), n_toks);
     if (llama_decode(g_ctx, batch) != 0) {
-        LOGE("llama_decode (prefill) failed");
-        g_buf->flags = 1;
+        LOGE("Prompt decode failed");
+        env->ReleaseStringUTFChars(prompt, input);
         return;
     }
 
-    auto start = std::chrono::high_resolution_clock::now();
-    std::string response;
+    g_buf->flags |= FLAG_ACTIVE;
+    auto start_time = std::chrono::high_resolution_clock::now();
 
-    for (int i = 0; i < g_max_new_tokens; i++) {
+    // Generation loop
+    char piece[256];
+    int generated = 0;
+    int limit = g_max_tokens < 2048 ? g_max_tokens : 2048;
+
+    for (int i = 0; i < limit; i++) {
         if (g_abort) break;
 
         llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
         if (llama_vocab_is_eog(vocab, tok)) break;
 
-        char piece[256] = {};
-        int n = llama_token_to_piece(vocab, tok, piece, sizeof(piece), 0, false);
-        if (n > 0 && g_buf->write_pos + n < STREAM_SIZE) {
-            memcpy(g_buf->data + g_buf->write_pos, piece, n);
-            g_buf->write_pos  += n;
-            g_buf->tokens_gen  = i + 1;
-            response.append(piece, n);
+        int n = llama_token_to_piece(vocab, tok, piece, (int)sizeof(piece), 0, false);
+        if (n > 0) {
+            uint32_t pos = g_buf->write_pos;
+            if (pos + (uint32_t)n < STREAM_SIZE - HEADER_SIZE) {
+                memcpy(g_buf->data + pos, piece, (size_t)n);
+                g_buf->write_pos = pos + (uint32_t)n;
+                generated = i + 1;
+                g_buf->tokens_gen = (uint32_t)generated;
 
-            auto now    = std::chrono::high_resolution_clock::now();
-            double secs = std::chrono::duration<double>(now - start).count();
-            if (secs > 0) g_buf->tps_scaled = (uint32_t)((i + 1) / secs * 100);
-        }
-
-        llama_batch b2 = llama_batch_get_one(&tok, 1);
-        if (llama_decode(g_ctx, b2) != 0) {
-            LOGE("llama_decode (gen step %d) failed", i);
-            break;
-        }
-    }
-
-    g_history.push_back({"user",      userMsg});
-    g_history.push_back({"assistant", response});
-
-    g_buf->flags = 1;
-    LOGI("Inference done: %zu tokens", response.size());
-}
-
-// ─── Abort / Reset ───────────────────────────────────────────────────────────
-JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_abortInferenceNative(
-    JNIEnv*, jobject) { g_abort = true; }
-
-JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_resetContextNative(
-    JNIEnv*, jobject)
-{
-    g_history.clear();
-    if (g_ctx) llama_kv_cache_clear(g_ctx);
-    if (g_buf) { g_buf->write_pos = 0; g_buf->flags = 1; g_buf->tokens_gen = 0; }
-    LOGI("Context reset.");
-}
-
-// ─── KV / position ───────────────────────────────────────────────────────────
-JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_getKvCacheUsageNative(
-    JNIEnv*, jobject)
-{
-    if (!g_ctx) return 0;
-    llama_memory_t mem = llama_get_memory(g_ctx);
-    int used = (int)llama_memory_seq_pos_max(mem, 0) + 1;
-    return (g_n_ctx > 0) ? (used * 100) / g_n_ctx : 0;
-}
-
-JNIEXPORT jint JNICALL Java_com_gguf_ipc_EngineCore_getWritePosNative(
-    JNIEnv*, jobject) { return g_buf ? (int)g_buf->write_pos : 0; }
-
-JNIEXPORT jboolean JNICALL Java_com_gguf_ipc_EngineCore_isInferenceDoneNative(
-    JNIEnv*, jobject) { return g_buf ? (g_buf->flags == 1) : JNI_TRUE; }
-
-// ─── Model info ──────────────────────────────────────────────────────────────
-JNIEXPORT jstring JNICALL Java_com_gguf_ipc_EngineCore_getModelInfoNative(
-    JNIEnv* env, jobject)
-{
-    if (!g_model) return env->NewStringUTF("{}");
-    std::ostringstream json;
-    json << "{";
-
-    char desc_buf[256];
-    llama_model_desc(g_model, desc_buf, sizeof(desc_buf));
-    json << "\"description\":\"" << desc_buf << "\",";
-
-    json << "\"parameters\":"    << llama_model_n_params(g_model)    << ",";
-    json << "\"size_bytes\":"    << llama_model_size(g_model)        << ",";
-    json << "\"context_train\":" << llama_model_n_ctx_train(g_model) << ",";
-
-    int count = llama_model_meta_count(g_model);
-    char key[512], val[512];
-    bool first = true;
-    for (int i = 0; i < count && i < 40; i++) {
-        if (llama_model_meta_key_by_index(g_model, i, key, sizeof(key)) >= 0 &&
-            llama_model_meta_val_str_by_index(g_model, i, val, sizeof(val)) >= 0)
-        {
-            if (!first) json << ",";
-            std::string v(val);
-            size_t pos = 0;
-            while ((pos = v.find('"', pos)) != std::string::npos) {
-                v.replace(pos, 1, "\\\""); pos += 2;
+                auto now = std::chrono::high_resolution_clock::now();
+                double sec = std::chrono::duration<double>(now - start_time).count();
+                if (sec > 0.0)
+                    g_buf->tps_scaled = (uint32_t)((double)generated / sec * 100.0);
             }
-            json << "\"" << key << "\":\"" << v << "\"";
-            first = false;
         }
+
+        llama_batch next = llama_batch_get_one(&tok, 1);
+        if (llama_decode(g_ctx, next) != 0) break;
     }
-    json << "}";
-    return env->NewStringUTF(json.str().c_str());
+
+    g_buf->flags = FLAG_DONE;
+    LOGI("Inference done: %d tokens", generated);
+    env->ReleaseStringUTFChars(prompt, input);
 }
 
-// ─── Benchmark ───────────────────────────────────────────────────────────────
-JNIEXPORT jstring JNICALL Java_com_gguf_ipc_EngineCore_benchmarkNative(
-    JNIEnv* env, jobject, jint ppTokens, jint tgTokens)
-{
-    if (!g_ctx || !g_model) return env->NewStringUTF("{\"pp_tps\":0,\"tg_tps\":0}");
+// ═══════════════════════════════════════════════════════════════════
+// Control
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_EngineCore_abortInferenceNative(JNIEnv*, jobject) {
+    g_abort = true;
+}
 
-    llama_kv_cache_clear(g_ctx);
-    rebuild_sampler();
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_EngineCore_resetContextNative(JNIEnv*, jobject) {
+    if (g_ctx) llama_kv_cache_seq_rm(g_ctx, 0, -1, -1);
+    if (g_buf) {
+        g_buf->write_pos  = 0;
+        g_buf->flags      = 0;
+        g_buf->tokens_gen = 0;
+        g_buf->tps_scaled = 0;
+    }
+    g_abort = false;
+}
 
-    auto vocab = llama_model_get_vocab(g_model);
+// ═══════════════════════════════════════════════════════════════════
+// KV Cache Usage
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT jint JNICALL
+Java_com_gguf_ipc_EngineCore_getKvCacheUsageNative(JNIEnv*, jobject) {
+    if (!g_ctx || !g_buf) return 0;
+    // Use the existing API style from the original codebase
+    int used = 0;
+    auto mem = llama_get_memory(g_ctx);
+    used = (int)llama_memory_seq_pos_max(mem, 0) + 1;
+    return (used * 100) / (g_n_ctx > 0 ? g_n_ctx : 8192);
+}
 
-    const std::string test_prompt(ppTokens, 'A');
-    std::vector<llama_token> toks(ppTokens + 4);
-    int n = llama_tokenize(vocab, test_prompt.c_str(), (int)test_prompt.size(),
-                           toks.data(), (int)toks.size(), true, false);
-    if (n <= 0) return env->NewStringUTF("{\"pp_tps\":0,\"tg_tps\":0}");
+// ═══════════════════════════════════════════════════════════════════
+// Model Info (JSON)
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT jstring JNICALL
+Java_com_gguf_ipc_EngineCore_getModelInfoNative(JNIEnv* env, jobject) {
+    if (!g_model) return env->NewStringUTF("{}");
 
-    auto t0 = std::chrono::high_resolution_clock::now();
-    llama_batch b = llama_batch_get_one(toks.data(), n);
-    llama_decode(g_ctx, b);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    double pp_sec = std::chrono::duration<double>(t1 - t0).count();
+    char buf[2048];
+    int n = snprintf(buf, sizeof(buf),
+        "{"
+        "\"desc\":\"%s\","
+        "\"type\":\"%s\","
+        "\"n_params\":%lld,"
+        "\"n_layer\":%d,"
+        "\"n_embd\":%d,"
+        "\"n_head\":%d,"
+        "\"n_ctx_train\":%d,"
+        "\"size\":\"%s\","
+        "\"n_gpu_layers\":%d"
+        "}",
+        llama_model_desc(g_model),
+        llama_model_type_name(g_model),
+        (long long)llama_model_n_params(g_model),
+        llama_model_n_layer(g_model),
+        llama_model_n_embd(g_model),
+        llama_model_n_head(g_model),
+        llama_model_n_ctx_train(g_model),
+        llama_model_size(g_model),
+        g_n_gpu_layers
+    );
+    return env->NewStringUTF(buf);
+}
 
-    auto t2 = std::chrono::high_resolution_clock::now();
+// ═══════════════════════════════════════════════════════════════════
+// Benchmark
+// ═══════════════════════════════════════════════════════════════════
+JNIEXPORT jstring JNICALL
+Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens, jint tgTokens) {
+    if (!g_ctx || !g_model) {
+        return env->NewStringUTF("{\"error\":\"Model not loaded\"}");
+    }
+
+    auto vocab   = llama_model_get_vocab(g_model);
+    auto bos     = llama_vocab_bos(vocab);
+    auto sampler = g_sampler;
+
+    // Dummy tokens for PP
+    std::vector<llama_token> dummy((size_t)ppTokens, bos);
+
+    // Warmup
+    llama_batch batch = llama_batch_get_one(dummy.data(), (int)dummy.size());
+    llama_decode(g_ctx, batch);
+    llama_kv_cache_seq_rm(g_ctx, 0, -1, -1);
+
+    // Timed PP
+    auto pp_start = std::chrono::high_resolution_clock::now();
+    batch = llama_batch_get_one(dummy.data(), (int)dummy.size());
+    llama_decode(g_ctx, batch);
+    auto pp_end = std::chrono::high_resolution_clock::now();
+    double pp_ms = std::chrono::duration<double, std::milli>(pp_end - pp_start).count();
+    double pp_tps = (pp_ms > 0.0) ? (double)ppTokens / (pp_ms / 1000.0) : 0.0;
+
+    // Timed TG
+    auto tg_start = std::chrono::high_resolution_clock::now();
+    llama_token last = bos;
     for (int i = 0; i < tgTokens; i++) {
-        llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
-        if (llama_vocab_is_eog(vocab, tok)) break;
-        llama_batch b2 = llama_batch_get_one(&tok, 1);
-        llama_decode(g_ctx, b2);
+        llama_batch b = llama_batch_get_one(&last, 1);
+        if (llama_decode(g_ctx, b) != 0) break;
+        last = llama_sampler_sample(sampler, g_ctx, -1);
     }
-    auto t3 = std::chrono::high_resolution_clock::now();
-    double tg_sec = std::chrono::duration<double>(t3 - t2).count();
+    auto tg_end = std::chrono::high_resolution_clock::now();
+    double tg_ms = std::chrono::duration<double, std::milli>(tg_end - tg_start).count();
+    double tg_tps = (tg_ms > 0.0) ? (double)tgTokens / (tg_ms / 1000.0) : 0.0;
 
-    llama_kv_cache_clear(g_ctx);
+    // Clean up
+    llama_kv_cache_seq_rm(g_ctx, 0, -1, -1);
 
-    char out[128];
-    snprintf(out, sizeof(out), "{\"pp_tps\":%.1f,\"tg_tps\":%.1f}",
-             pp_sec > 0 ? n / pp_sec : 0.0,
-             tg_sec > 0 ? tgTokens / tg_sec : 0.0);
-    return env->NewStringUTF(out);
-}
-
-// ─── Chat history export ─────────────────────────────────────────────────────
-JNIEXPORT jstring JNICALL Java_com_gguf_ipc_EngineCore_exportChatHistoryNative(
-    JNIEnv* env, jobject)
-{
-    std::string out;
-    for (auto& turn : g_history) {
-        out += (turn.role == "user" ? "User: " : "Assistant: ");
-        out += turn.content + "\n\n";
-    }
-    return env->NewStringUTF(out.c_str());
+    char result[512];
+    snprintf(result, sizeof(result),
+        "{\"pp_tps\":%.1f,\"tg_tps\":%.1f,\"pp_ms\":%.1f,\"tg_ms\":%.1f,"
+        "\"pp_tokens\":%d,\"tg_tokens\":%d}",
+        pp_tps, tg_tps, pp_ms, tg_ms, (int)ppTokens, (int)tgTokens);
+    return env->NewStringUTF(result);
 }
 
 } // extern "C"

@@ -1,175 +1,125 @@
 package com.gguf.ipc
 
-import android.app.ActivityManager
-import android.content.Context
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SharedMemory
-import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/**
- * EngineCore v5 — Kotlin bridge to the C++ llama.cpp JNI engine.
- */
 object EngineCore {
-
-    private const val TAG = "GGUF_ZeroCopy_v5"
-    private const val HEADER_SIZE       = 16
-    private const val TOKEN_STREAM_SIZE = 524288
-    private const val TOTAL_SIZE        = HEADER_SIZE + TOKEN_STREAM_SIZE
-
     init { System.loadLibrary("ipc-bridge") }
 
-    // ── Native declarations ─────────────────────────────────────────────────
-    private external fun initializeSharedMemoryNative(): Int
-    external  fun loadGgufModelNative(filePath: String): Boolean
-    external  fun executeZeroCopyInference(prompt: String)
-    private external fun getWritePosNative(): Int
-    private external fun isInferenceDoneNative(): Boolean
-    external  fun abortInferenceNative()
-    external  fun setEngineConfigNative(
-        nCtx: Int, maxNewTokens: Int, temperature: Float,
-        topP: Float, minP: Float, nGpuLayers: Int, nThreads: Int, seed: Int
+    // ── Native JNI declarations ──
+    external fun initializeSharedMemoryNative(): Int
+    external fun loadGgufModelNative(path: String): Boolean
+    external fun setNativeConfig(
+        nCtx: Int, maxNewTokens: Int, temperature: Float, topP: Float,
+        minP: Float, nGpuLayers: Int, nThreads: Int, seed: Int
     )
-    external  fun setSystemPromptNative(prompt: String)
-    external  fun resetContextNative()
-    external  fun getModelInfoNative(): String
-    external  fun benchmarkNative(ppTokens: Int, tgTokens: Int): String
-    external  fun setRepeatPenaltyNative(repeatPenalty: Float, freqPenalty: Float, presPenalty: Float)
-    external  fun exportChatHistoryNative(): String
-    external  fun getKvCacheUsageNative(): Int
+    external fun setSystemPromptNative(prompt: String)
+    external fun setRepeatPenaltyNative(repeatPenalty: Float, freqPenalty: Float, presPenalty: Float)
+    external fun executeZeroCopyInference(prompt: String)
+    external fun abortInferenceNative()
+    external fun resetContextNative()
+    external fun getKvCacheUsageNative(): Int
+    external fun benchmarkNative(ppTokens: Int, tgTokens: Int): String
+    external fun getModelInfoNative(): String
 
-    // ── Shared memory ───────────────────────────────────────────────────────
-    private var sharedMemory: SharedMemory? = null
-    private var readBuffer: ByteBuffer?     = null
-
-    // ── Config ──────────────────────────────────────────────────────────────
+    // ── Data classes ──
     data class Config(
-        val nCtx: Int          = 8192,
-        val maxNewTokens: Int  = 4096,
+        val nCtx: Int = 8192,
+        val maxNewTokens: Int = 4096,
         val temperature: Float = 0.7f,
-        val topP: Float        = 0.9f,
-        val minP: Float        = 0.05f,
-        val nGpuLayers: Int    = 0,
-        val nThreads: Int      = 4,
-        val seed: Int          = -1
+        val topP: Float = 0.9f,
+        val minP: Float = 0.05f,
+        val nGpuLayers: Int = 99,
+        val nThreads: Int = 4,
+        val seed: Int = -1
     )
 
     data class RepeatPenaltyConfig(
         val repeatPenalty: Float = 1.1f,
-        val freqPenalty: Float   = 0.0f,
-        val presPenalty: Float   = 0.0f
+        val freqPenalty: Float = 0.0f,
+        val presPenalty: Float = 0.0f
     )
 
-    // ── Hardware detection ──────────────────────────────────────────────────
-    /**
-     * Returns a human-readable GPU tier label for display in the UI.
-     */
-    fun getGpuTierLabel(context: Context): String {
-        val hw    = Build.HARDWARE.lowercase()
-        val board = Build.BOARD.lowercase()
-        val soc   = Build.SOC_MODEL?.lowercase() ?: ""
+    // ── Shared memory protocol ──
+    // Header: write_pos(4) | flags(4) | tokens_gen(4) | tps_scaled(4) = 16 bytes
+    // Data: 524272 bytes (stream buffer)
+    private const val HEADER_SIZE = 16
+    private const val STREAM_CAPACITY = 524288 - HEADER_SIZE
+    private const val FLAG_DONE   = 1
+    private const val FLAG_ACTIVE = 2
 
-        return when {
-            hw.contains("qcom") || board.contains("qcom") || soc.contains("snapdragon") ||
-            board.contains("kona") || board.contains("kalama") || board.contains("pineapple") ->
-                "Snapdragon (Adreno GPU ✓)"
-            hw.contains("exynos") || board.contains("s5e") || board.contains("exynos") ->
-                "Exynos (GPU limited — CPU mode recommended)"
-            hw.contains("mt") || board.contains("mt") || board.contains("mediatek") ->
-                "MediaTek Dimensity (GPU partial)"
-            hw.contains("tensor") || board.contains("slider") || board.contains("gs") ->
-                "Google Tensor (GPU partial)"
-            else ->
-                "Unknown SoC (using safe defaults)"
-        }
-    }
+    private var readBuffer: ByteBuffer? = null
+    private var lastReadPos = 0
+    private var _totalTokens = 0
 
-    /**
-     * Returns recommended GPU layers based on SoC and RAM.
-     * Exynos → 0 (unreliable Vulkan), Snapdragon → partial or full offload.
-     */
-    fun autoDetectGpuLayers(context: Context): Int {
-        val am   = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val mem  = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
-        val ramGb = mem.totalMem / (1024L * 1024 * 1024)
-        val hw    = Build.HARDWARE.lowercase()
-        val board = Build.BOARD.lowercase()
-        val soc   = Build.SOC_MODEL?.lowercase() ?: ""
-
-        Log.d(TAG, "HW=$hw BOARD=$board SOC=$soc RAM=${ramGb}GB")
-
-        return when {
-            // Exynos — Vulkan backend unreliable; keep on CPU
-            hw.contains("exynos") || board.contains("s5e") || board.contains("exynos") -> 0
-
-            // Snapdragon — full or partial GPU offload based on RAM
-            hw.contains("qcom") || board.contains("qcom") || soc.contains("snapdragon") ||
-            board.contains("kona") || board.contains("kalama") || board.contains("pineapple") ->
-                if (ramGb >= 12) 99 else if (ramGb >= 8) 32 else 16
-
-            // MediaTek / Tensor — conservative
-            else -> if (ramGb >= 12) 24 else 8
-        }
-    }
-
-    fun autoDetectThreads(): Int {
-        val cores = Runtime.getRuntime().availableProcessors()
-        return if (cores > 4) cores - 2 else 4
-    }
-
-    // ── Config helpers ──────────────────────────────────────────────────────
-    fun setEngineConfig(cfg: Config) = setEngineConfigNative(
-        cfg.nCtx, cfg.maxNewTokens, cfg.temperature, cfg.topP, cfg.minP,
-        cfg.nGpuLayers, cfg.nThreads, cfg.seed
-    )
-
-    fun setRepeatPenalty(cfg: RepeatPenaltyConfig) =
-        setRepeatPenaltyNative(cfg.repeatPenalty, cfg.freqPenalty, cfg.presPenalty)
-
-    // ── Boot ────────────────────────────────────────────────────────────────
+    // ── Lifecycle ──
     fun bootZeroCopyEngine() {
-        val nativeFd = initializeSharedMemoryNative()
-        if (nativeFd < 0) { Log.e(TAG, "initializeSharedMemoryNative failed: $nativeFd"); return }
-        try {
-            val pfd    = ParcelFileDescriptor.fromFd(nativeFd)
-            val dupPfd = pfd.dup()
-            pfd.close()
-            sharedMemory = SharedMemory.fromFileDescriptor(dupPfd)
-            dupPfd.close()
-            readBuffer = sharedMemory!!.mapReadOnly().apply { order(ByteOrder.LITTLE_ENDIAN) }
-            Log.i(TAG, "Ring buffer mapped OK.")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to map shared memory: ${e.message}", e)
+        val fd = initializeSharedMemoryNative()
+        if (fd >= 0) {
+            val shm = SharedMemory.fromFileDescriptor(ParcelFileDescriptor.fromFd(fd))
+            readBuffer = shm.mapReadOnly().apply { order(ByteOrder.LITTLE_ENDIAN) }
         }
     }
 
     fun loadModel(path: String): Boolean {
-        Log.i(TAG, "loadModel: $path")
-        return loadGgufModelNative(path)
+        val ok = loadGgufModelNative(path)
+        if (ok) {
+            lastReadPos = 0
+            _totalTokens = 0
+        }
+        return ok
     }
 
-    // ── Stream reading ──────────────────────────────────────────────────────
+    fun setEngineConfig(cfg: Config) {
+        setNativeConfig(
+            cfg.nCtx, cfg.maxNewTokens, cfg.temperature, cfg.topP,
+            cfg.minP, cfg.nGpuLayers, cfg.nThreads, cfg.seed
+        )
+    }
+
+    fun setRepeatPenalty(cfg: RepeatPenaltyConfig) {
+        setRepeatPenaltyNative(cfg.repeatPenalty, cfg.freqPenalty, cfg.presPenalty)
+    }
+
+    // ── Stream reading (pure Kotlin, from shared memory) ──
+    private fun buf(): ByteBuffer = readBuffer
+        ?: error("EngineCore not initialized — call bootZeroCopyEngine()")
+
+    /** Returns new bytes since last call. */
     fun readPartialStream(): String {
-        val buf = readBuffer ?: return ""
-        buf.position(0)
-        val writePos = buf.int.and(0x7FFFFFFF).coerceAtMost(TOKEN_STREAM_SIZE)
-        if (writePos == 0) return ""
-        buf.position(HEADER_SIZE)
-        val bytes = ByteArray(writePos)
-        buf.get(bytes)
+        val b = buf()
+        val pos = b.getInt(0) and 0x7FFFFFFF
+        val cap = pos.coerceAtMost(STREAM_CAPACITY)
+        if (cap <= lastReadPos) return ""
+        val len = cap - lastReadPos
+        val bytes = ByteArray(len)
+        b.position(HEADER_SIZE + lastReadPos)
+        b.get(bytes)
+        lastReadPos = cap
+        return String(bytes, Charsets.UTF_8)
+    }
+
+    /** Reads everything written so far and resets cursor. */
+    fun readTokenStream(): String {
+        val b = buf()
+        val pos = b.getInt(0) and 0x7FFFFFFF
+        if (pos <= 0) return ""
+        val size = pos.coerceAtMost(STREAM_CAPACITY)
+        val bytes = ByteArray(size)
+        b.position(HEADER_SIZE)
+        b.get(bytes)
+        lastReadPos = size
         return String(bytes, Charsets.UTF_8).trimEnd('\u0000')
     }
 
-    fun readTokenStream(): String = readPartialStream()
+    fun getTokensGenerated(): Int = buf().getInt(8)
+    fun isInferenceDone(): Boolean = (buf().getInt(4) and FLAG_DONE) != 0
+    fun addTotalTokens(n: Int) { _totalTokens += n }
+    fun totalTokens(): Int = _totalTokens
+    fun resetTotalTokens() { _totalTokens = 0 }
 
-    fun getTokensGenerated(): Int {
-        val buf = readBuffer ?: return 0
-        buf.position(8)
-        return buf.int.and(0x7FFFFFFF)
-    }
-
-    fun getWritePos(): Int         = getWritePosNative()
-    fun isInferenceDone(): Boolean = isInferenceDoneNative()
+    /** Placeholder — real export handled by UI layer. */
+    fun exportChatHistoryNative(): String = ""
 }

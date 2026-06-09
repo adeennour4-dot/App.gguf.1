@@ -4,11 +4,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Deep navy background with subtle grid -->
-    <rect android:fillColor="#060A11" android:width="108" android:height="108"/>
-    <!-- Subtle grid lines -->
-    <path android:strokeColor="#0D1830" android:strokeWidth="0.8"
-        android:fillColor="@android:color/transparent"
-        android:pathData="M0,27 L108,27 M0,54 L108,54 M0,81 L108,81
-                          M27,0 L27,108 M54,0 L54,108 M81,0 L81,108"/>
+    <path
+        android:fillColor="#001F3F"
+        android:pathData="M0,0h108v108h-108z" />
 </vector>
