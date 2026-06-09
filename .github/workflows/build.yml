@@ -45,7 +45,7 @@ jobs:
       - name: Write local.properties
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "ndk.dir=$ANDROID_HOME/ndk/29.0.14206865" >> local.properties
+          echo "android.ndkVersion=$ANDROID_HOME/ndk/29.0.14206865" >> local.properties
 
       - name: Cache CMake deps (llama.cpp FetchContent)
         uses: actions/cache@v4
