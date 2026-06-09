@@ -173,19 +173,6 @@ private fun AppRoot() {
 
     val chatHistory = remember { mutableStateListOf<ChatMessage>() }
 
-    // Load chat messages when session changes
-    fun loadChatSession() {
-        chatHistory.clear()
-        val msgs = chatManager.loadMessagesForCurrent()
-        chatHistory.addAll(msgs)
-    }
-
-    // Init: auto-detect device, load first session
-    LaunchedEffect(Unit) {
-        autoDetectAndApply()
-        loadChatSession()
-    }
-
     // ── Apply config to native ──
     fun applyConfig() {
         EngineCore.setEngineConfig(EngineCore.Config(
@@ -216,6 +203,19 @@ private fun AppRoot() {
         gpuLStr = cpu.suggestedGpuLayers.toString()
         applyConfig()
         engineStatus = "Auto-configured: ${cpu.cores}c ${cpu.architecture} ${cpu.suggestedGpuLayers}GL"
+    }
+
+    // Load chat messages when session changes
+    fun loadChatSession() {
+        chatHistory.clear()
+        val msgs = chatManager.loadMessagesForCurrent()
+        chatHistory.addAll(msgs)
+    }
+
+    // Init: auto-detect device, load first session
+    LaunchedEffect(Unit) {
+        autoDetectAndApply()
+        loadChatSession()
     }
 
     // ── Inference polling ──
