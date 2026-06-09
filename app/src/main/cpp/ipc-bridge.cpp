@@ -55,7 +55,7 @@ static void rebuild_sampler() {
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
-        g_repeat_pen, g_freq_pen, g_pres_pen));
+      -1, g_repeat_pen, g_freq_pen, g_pres_pen));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(g_min_p, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(g_top_p, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(g_temperature));
