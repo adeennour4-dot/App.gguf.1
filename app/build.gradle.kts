@@ -1,16 +1,17 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")          // ← FIXED: was missing, Kotlin files wouldn't compile
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace  = "com.gguf.ipc"
     compileSdk = 36
-    ndkVersion = "29.0.14206865"          // NDK r29 stable
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "com.gguf.ipc"
-        minSdk        = 29                 // FIXED: Prevents SharedMemory API compilation failures
+        minSdk        = 29
         targetSdk     = 36
         versionCode   = 5
         versionName   = "5.0"
@@ -21,13 +22,7 @@ android {
                 cFlags  ("-O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector")
                 arguments(
                     "-DANDROID_STL=c++_shared",
-                    // Vulkan OFF: llama.cpp's Vulkan backend requires SPIRV-Headers
-                    // on the HOST at compile time (to compile GLSL shaders).
-                    // GitHub Actions runners don't have it — enabling Vulkan here
-                    // causes: "Could not find SPIRV-Headers"
-                    // llama.cpp will still use the Android Vulkan loader at runtime
-                    // via the CPU/GPU backend; this only disables compile-time shader compilation.
-                    "-DGGML_VULKAN=OFF",
+                    "-DGGML_VULKAN=OFF",        // Requires SPIRV-Headers on host; disabled for CI
                     "-DGGML_OPENMP=OFF",
                     "-DGGML_LLAMAFILE=OFF",
                     "-DLLAMA_BUILD_TESTS=OFF",
@@ -44,9 +39,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    buildFeatures {
-        compose = true
-    }
+    buildFeatures { compose = true }
 
     externalNativeBuild {
         cmake {
@@ -57,17 +50,11 @@ android {
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-        
-        // FIXED: Bypasses manifest extractNativeLibs crash and forces JNI extraction
-        jniLibs {
-            useLegacyPackaging = true
-        }
+        jniLibs { useLegacyPackaging = true }
     }
 }
 
-kotlin {
-    jvmToolchain(17)
-}
+kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
