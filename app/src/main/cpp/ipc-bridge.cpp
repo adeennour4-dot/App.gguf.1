@@ -214,7 +214,7 @@ JNIEXPORT void JNICALL Java_com_gguf_ipc_EngineCore_executeZeroCopyInference(
     rebuild_sampler();
 
     // FIX: Clear KV cache before each turn — avoids stale context / OOM crash
-    llama_kv_cache_clear(g_ctx);
+    llama_kv_self_clear(g_ctx);
 
     // Build full conversation prompt
     std::string fullPrompt = build_prompt(userMsg);
