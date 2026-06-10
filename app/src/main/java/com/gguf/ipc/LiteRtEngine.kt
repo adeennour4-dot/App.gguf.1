@@ -34,25 +34,13 @@ class LiteRtEngine : InferenceEngine {
             } catch (e: UnsatisfiedLinkError) {
                 Log.w(TAG, "Native library not found (may load via AAR): ${e.message}")
             }
-
-            try {
-                // Experimental API - simplified for now
-                try {
-                    val field = ExperimentalFlags::class.getDeclaredField("enableSpeculativeDecoding")
-                    field.isAccessible = true
-                    field.set(null, true)
-                    Log.i(TAG, "Speculative decoding enabled for Gemma 4 support (via reflection)")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not enable speculative decoding: ${e.message}")
-                }
-
-                // Use CPU backend (GPU/NPU backends require different initialization)
-                preferredBackend = Backend.CPU(null)
-                Log.i(TAG, "Using CPU backend")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error initializing engine", e)
-            }
         }
+    }
+
+    init {
+        // Initialize preferred backend (instance initialization)
+        preferredBackend = Backend.CPU(null)
+        Log.i(TAG, "Using CPU backend")
     }
 
     override fun loadModel(path: String): Boolean {
