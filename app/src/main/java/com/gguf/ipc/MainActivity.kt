@@ -274,7 +274,7 @@ fun AppScaffold() {
                         filePicker.launch(intent)
                     })
                 } else {
-                    ChatList(chat, listState, streamedText, isInferring, clip)
+                    ChatList(chat, listState, streamedText, isInferring, isProcessing, clip)
                 }
             }
 
@@ -373,7 +373,7 @@ fun WelcomeScreen(onLoad: () -> Unit) {
 
 // ── Chat List ────────────────────────────────────────────────────────
 @Composable
-fun ChatList(chat: List<ChatMessage>, listState: LazyListState, streamedText: String, isInferring: Boolean, clip: ClipboardManager) {
+fun ChatList(chat: List<ChatMessage>, listState: LazyListState, streamedText: String, isInferring: Boolean, isProcessing: Boolean, clip: ClipboardManager) {
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         items(chat) { msg ->

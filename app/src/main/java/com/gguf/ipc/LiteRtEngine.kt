@@ -53,11 +53,7 @@ class LiteRtEngine : InferenceEngine {
                 conversationClass = Class.forName("com.google.ai.edge.litertlm.Conversation")
                 messageCallbackClass = Class.forName("com.google.ai.edge.litertlm.MessageCallback")
 
-                backendCpuClass = try {
-                    Class.forName("com.google.ai.edge.litertlm.Backend\$CPU")
-                } catch (e: ClassNotFoundException) {
-                    Class.forName("com.google.ai.edge.litertlm.Backend$CPU")
-                }
+                backendCpuClass = Class.forName("com.google.ai.edge.litertlm.Backend\$CPU")
 
                 // Enable speculative decoding (required for Gemma 4 models)
                 try {
