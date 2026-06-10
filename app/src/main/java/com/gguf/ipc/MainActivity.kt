@@ -28,6 +28,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -586,12 +587,12 @@ fun SettingsContent(
                 Text("Apply", color = Color.White, fontWeight = FontWeight.Bold)
             }
             OutlinedButton(onClick = onReset, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp),
-                colors = OutlinedButtonDefaults.outlinedButtonColors(contentColor = Pal.Amber)) {
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Pal.Amber)) {
                 Text("Reset Context", fontSize = 11.sp)
             }
         }
         OutlinedButton(onClick = onUnload, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
-            colors = OutlinedButtonDefaults.outlinedButtonColors(contentColor = Pal.Red)) {
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Pal.Red)) {
             Text("Unload Model", fontSize = 11.sp)
         }
         Text("Context/GPU changes need model reload.", fontSize = 10.sp, color = Pal.Amber, fontFamily = FontFamily.Monospace)
