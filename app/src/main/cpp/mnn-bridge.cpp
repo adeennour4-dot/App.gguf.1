@@ -6,6 +6,7 @@
 #include <sstream>
 #include <atomic>
 #include <mutex>
+#include <chrono>
 #include <android/log.h>
 
 #define LOG_TAG "MnnBridge"
@@ -14,7 +15,6 @@
 
 // MNN-LLM C++ API
 #include "llm/llm.hpp"
-#include "nlohmann/json.hpp"
 
 using namespace MNN::Transformer;
 
@@ -29,6 +29,37 @@ static std::string g_full_response;
 static std::vector<std::pair<std::string, std::string>> g_history;
 static std::string g_system_prompt = "You are a helpful assistant.";
 
+// Helper: build simple JSON string from key-value pairs
+static std::string buildJson(std::initializer_list<std::pair<const char*, std::string>> items) {
+    std::string json = "{";
+    bool first = true;
+    for (auto& [k, v] : items) {
+        if (!first) json += ",";
+        first = false;
+        json += "\"" + std::string(k) + "\":" + v;
+    }
+    json += "}";
+    return json;
+}
+
+static std::string quote(const std::string& s) {
+    return "\"" + s + "\"";
+}
+
+static std::string num(float f) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%g", (double)f);
+    return buf;
+}
+
+static std::string num(int i) {
+    return std::to_string(i);
+}
+
+static std::string bol(bool b) {
+    return b ? "true" : "false";
+}
+
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
@@ -38,7 +69,6 @@ Java_com_gguf_ipc_MnnEngine_mnnLoadModel(JNIEnv* env, jobject thiz, jstring path
 
     std::lock_guard<std::mutex> lock(g_mutex);
 
-    // Clean up previous model
     if (g_llm) {
         delete g_llm;
         g_llm = nullptr;
@@ -48,17 +78,12 @@ Java_com_gguf_ipc_MnnEngine_mnnLoadModel(JNIEnv* env, jobject thiz, jstring path
     env->ReleaseStringUTFChars(path, model_path);
 
     if (g_llm == nullptr) {
-        LOGE("createLLM failed for path: %s", model_path);
+        LOGE("createLLM failed");
         return JNI_FALSE;
     }
 
-    // Apply default config
-    nlohmann::json config;
-    config["use_mmap"] = true;
-    config["precision"] = "low";
-    config["backend_type"] = "cpu";
-    std::string config_str = config.dump();
-    g_llm->set_config(config_str);
+    // Apply default config as JSON string
+    g_llm->set_config("{\"use_mmap\":true,\"precision\":\"low\",\"backend_type\":\"cpu\"}");
 
     if (!g_llm->load()) {
         LOGE("Model load() failed");
@@ -77,7 +102,7 @@ Java_com_gguf_ipc_MnnEngine_mnnLoadModel(JNIEnv* env, jobject thiz, jstring path
 JNIEXPORT void JNICALL
 Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstring prompt) {
     const char* prompt_str = env->GetStringUTFChars(prompt, nullptr);
-    LOGI("Executing MNN inference: %s", prompt_str);
+    LOGI("Executing MNN inference");
 
     std::lock_guard<std::mutex> lock(g_mutex);
     g_stop_requested = false;
@@ -86,23 +111,18 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
     g_stream_buffer.clear();
     g_full_response.clear();
 
-    // Add user message to history
     g_history.emplace_back("user", std::string(prompt_str));
     env->ReleaseStringUTFChars(prompt, prompt_str);
 
-    // Create a stringstream to capture output
     std::ostringstream output_stream;
 
-    // Run inference — response() does prefill, then we decode token by token
     g_llm->response(g_history, &output_stream, "<eop>", 0);
 
-    // Now decode tokens one at a time for streaming
     int max_tokens = 4096;
     for (int i = 0; i < max_tokens && !g_stop_requested; ++i) {
         g_llm->generate(1);
         g_tokens_generated++;
 
-        // Check if we hit end-of-pattern
         auto* ctx = g_llm->getContext();
         if (ctx != nullptr) {
             if (ctx->status == LlmStatus::NORMAL_FINISHED ||
@@ -112,13 +132,9 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
         }
     }
 
-    // Get the full response from the output stream
     g_full_response = output_stream.str();
     g_stream_buffer = g_full_response;
-
-    // Add assistant response to history
     g_history.emplace_back("assistant", g_full_response);
-
     g_inference_done = true;
     LOGI("MNN inference done, tokens=%d", g_tokens_generated.load());
 }
@@ -156,12 +172,11 @@ Java_com_gguf_ipc_MnnEngine_mnnGetKvCacheUsage(JNIEnv* env, jobject thiz) {
     if (!g_llm || !g_model_loaded) return 0;
     auto* ctx = g_llm->getContext();
     if (ctx == nullptr) return 0;
-    // Rough estimate based on history size vs context window
     int history_tokens = 0;
     for (auto& item : g_history) {
-        history_tokens += (int)item.second.size() / 4; // rough token estimate
+        history_tokens += (int)item.second.size() / 4;
     }
-    int ctx_size = 8192; // default
+    int ctx_size = 8192;
     return (int)((float)history_tokens / ctx_size * 100.0f);
 }
 
@@ -184,51 +199,49 @@ Java_com_gguf_ipc_MnnEngine_mnnGetModelInfo(JNIEnv* env, jobject thiz) {
         return env->NewStringUTF("{}");
     }
     auto* ctx = g_llm->getContext();
-    nlohmann::json info;
-    info["engine"] = "MNN";
-    info["model_loaded"] = true;
-    if (ctx) {
-        info["prompt_len"] = ctx->prompt_len;
-        info["gen_seq_len"] = ctx->gen_seq_len;
-    }
-    return env->NewStringUTF(info.dump().c_str());
+    std::string info = buildJson({
+        {"engine", quote("MNN")},
+        {"model_loaded", bol(true)},
+        {"prompt_len", ctx ? num(ctx->prompt_len) : num(0)},
+        {"gen_seq_len", ctx ? num(ctx->gen_seq_len) : num(0)}
+    });
+    return env->NewStringUTF(info.c_str());
 }
 
 JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_MnnEngine_mnnBenchmark(JNIEnv* env, jobject thiz, jint ppTokens, jint tgTokens) {
     if (!g_llm || !g_model_loaded) {
-        return env->NewStringUTF("{\"error\": \"Model not loaded\"}");
+        return env->NewStringUTF("{\"error\":\"Model not loaded\"}");
     }
 
-    nlohmann::json result;
     const int tok = 16;
 
-    // Prefill benchmark
     std::vector<int> tokens(ppTokens, tok);
     auto start = std::chrono::high_resolution_clock::now();
     g_llm->response(tokens, nullptr, nullptr, 1);
     auto end = std::chrono::high_resolution_clock::now();
     auto* ctx = g_llm->getContext();
-    float prefill_ms = ctx ? ctx->prefill_us / 1000.0f : 0;
-    float prefill_tps = (prefill_ms > 0) ? ppTokens / (prefill_ms / 1000.0f) : 0;
+    float prefill_ms = ctx ? (float)ctx->prefill_us / 1000.0f : 0;
+    float prefill_tps = (prefill_ms > 0) ? (float)ppTokens / (prefill_ms / 1000.0f) : 0;
 
-    // Decode benchmark
     std::vector<int> gen_tokens(1, tok);
     start = std::chrono::high_resolution_clock::now();
     g_llm->response(gen_tokens, nullptr, nullptr, tgTokens);
     end = std::chrono::high_resolution_clock::now();
     ctx = g_llm->getContext();
-    float decode_ms = ctx ? ctx->decode_us / 1000.0f : 0;
-    float decode_tps = (decode_ms > 0) ? tgTokens / (decode_ms / 1000.0f) : 0;
+    float decode_ms = ctx ? (float)ctx->decode_us / 1000.0f : 0;
+    float decode_tps = (decode_ms > 0) ? (float)tgTokens / (decode_ms / 1000.0f) : 0;
 
-    result["prefill_tokens"] = ppTokens;
-    result["prefill_ms"] = prefill_ms;
-    result["prefill_tps"] = prefill_tps;
-    result["decode_tokens"] = tgTokens;
-    result["decode_ms"] = decode_ms;
-    result["decode_tps"] = decode_tps;
+    std::string result = buildJson({
+        {"prefill_tokens", num((int)ppTokens)},
+        {"prefill_ms", num(prefill_ms)},
+        {"prefill_tps", num(prefill_tps)},
+        {"decode_tokens", num((int)tgTokens)},
+        {"decode_ms", num(decode_ms)},
+        {"decode_tps", num(decode_tps)}
+    });
 
-    return env->NewStringUTF(result.dump().c_str());
+    return env->NewStringUTF(result.c_str());
 }
 
 JNIEXPORT jstring JNICALL
