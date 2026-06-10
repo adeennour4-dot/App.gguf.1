@@ -9,13 +9,14 @@ include(FetchContent)
 # Vulkan: Works on Mali (Pixel, MediaTek), Samsung Xclipse (RDNA)
 # OpenCL: Works on Qualcomm Adreno (8 Gen 3, 8 Elite, X-Elite)
 #
-# Both are enabled by default. At runtime, only one is active based on GPU.
+# On Android, Vulkan is a system library at /system/lib64/libvulkan.so
+# OpenCL is at /vendor/lib64/libOpenCL.so (vendor-provided)
 # ---------------------------------------------------------------------------
 
 # Vulkan backend (ON for Mali/Xclipse GPUs)
 option(GGML_VULKAN "Enable Vulkan GPU backend" ON)
 
-# OpenCL backend (ON for Adreno GPUs)
+# OpenCL backend (OFF by default, enable for Adreno builds)
 option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)
 
 # llama.cpp build options
@@ -64,23 +65,33 @@ target_link_libraries(ipc-bridge
         ${android-lib}
 )
 
-# Link Vulkan if enabled
+# ---------------------------------------------------------------------------
+# Vulkan linking (Android system library)
+# On Android, Vulkan is loaded dynamically via the Vulkan loader
+# ---------------------------------------------------------------------------
 if(GGML_VULKAN)
-    find_package(Vulkan REQUIRED)
-    target_link_libraries(ipc-bridge PRIVATE Vulkan::Vulkan)
-    target_compile_definitions(ipc-bridge PRIVATE GGML_VULKAN_ENABLED)
+    # On Android, Vulkan is a system library - just link against it
+    # The Vulkan loader is at /system/lib64/libvulkan.so
+    find_library(Vulkan_LIB vulkan)
+    if(Vulkan_LIB)
+        target_link_libraries(ipc-bridge PRIVATE ${Vulkan_LIB})
+        target_compile_definitions(ipc-bridge PRIVATE GGML_VULKAN_ENABLED)
+        message(STATUS "Vulkan enabled: ${Vulkan_LIB}")
+    else()
+        message(WARNING "Vulkan not found, disabling Vulkan backend")
+        set(GGML_VULKAN OFF)
+    endif()
 endif()
 
-# Link OpenCL if enabled
+# ---------------------------------------------------------------------------
+# OpenCL linking (Android vendor library)
+# On Android, OpenCL is at /vendor/lib64/libOpenCL.so
+# ---------------------------------------------------------------------------
 if(GGML_OPENCL)
-    find_library(OpenCL_LIB OpenCL)
-    if(OpenCL_LIB)
-        target_link_libraries(ipc-bridge PRIVATE ${OpenCL_LIB})
-        target_compile_definitions(ipc-bridge PRIVATE GGML_OPENCL_ENABLED)
-    else()
-        message(WARNING "OpenCL not found, disabling OpenCL backend")
-        set(GGML_OPENCL OFF)
-    endif()
+    # OpenCL is loaded dynamically on Android
+    # We link against it at runtime via dlopen
+    target_compile_definitions(ipc-bridge PRIVATE GGML_OPENCL_ENABLED)
+    message(STATUS "OpenCL enabled (runtime loading)")
 endif()
 
 target_compile_features(ipc-bridge PRIVATE cxx_std_17)
