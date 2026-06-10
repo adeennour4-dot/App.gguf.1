@@ -124,6 +124,7 @@ fun AppScaffold() {
     var filename     by remember { mutableStateOf("") }
     var modelInfo    by remember { mutableStateOf<JSONObject?>(null) }
     var streamedText by remember { mutableStateOf("") }
+    var isProcessing by remember { mutableStateOf(false) }  // true during prompt eval before first token
     var prompt       by remember { mutableStateOf("") }
     var kvUsage      by remember { mutableIntStateOf(0) }
     var tps          by remember { mutableFloatStateOf(0f) }
@@ -181,22 +182,27 @@ fun AppScaffold() {
     LaunchedEffect(isInferring) {
         if (!isInferring) return@LaunchedEffect
         val start = System.currentTimeMillis()
+        var firstTokenSeen = false
+        isProcessing = true
         while (isInferring) {
-            delay(80)
+            delay(30)
             val e = EngineManager.getCurrentEngine() ?: break
             val partial = e.readPartialStream()
-            if (partial.isNotEmpty()) streamedText = partial
+            if (partial.isNotEmpty()) {
+                streamedText = partial
+                if (!firstTokenSeen) { firstTokenSeen = true; isProcessing = false }
+            }
             val elapsed = (System.currentTimeMillis() - start) / 1000f
             val tok = e.getTokensGenerated()
             if (elapsed > 0) tps = tok / elapsed
             kvUsage = e.getKvCacheUsage()
             if (e.isInferenceDone()) {
-                delay(30)
+                delay(60)
                 val final = e.readTokenStream()
                 val ft = e.getTokensGenerated()
                 totalTokens += ft
                 if (final.isNotEmpty()) chat.add(ChatMessage(Role.ASSISTANT, final, tps = if (elapsed > 0) ft / elapsed else 0f, tokens = ft))
-                streamedText = ""; isInferring = false
+                streamedText = ""; isInferring = false; isProcessing = false
             }
         }
     }
@@ -374,7 +380,9 @@ fun ChatList(chat: List<ChatMessage>, listState: LazyListState, streamedText: St
             ChatBubble(msg, onCopy = { clip.setPrimaryClip(ClipData.newPlainText("msg", it)) })
         }
         if (isInferring && streamedText.isNotEmpty()) {
-            item { StreamingBubble(streamedText) }
+            item { StreamingBubble(streamedText, false) }
+        } else if (isInferring && isProcessing) {
+            item { StreamingBubble("", true) }
         }
     }
 }
@@ -449,7 +457,23 @@ fun ThinkingContent(content: String) {
 
 // ── Streaming Bubble ─────────────────────────────────────────────────
 @Composable
-fun StreamingBubble(text: String) {
+fun StreamingBubble(text: String, processing: Boolean = false) {
+    if (processing) {
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.Bottom) {
+            Box(modifier = Modifier.size(24.dp).clip(RoundedCornerShape(7.dp)).background(Pal.Accent), contentAlignment = Alignment.Center) {
+                Text("Z", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+            }
+            Spacer(Modifier.width(8.dp))
+            Surface(modifier = Modifier.clip(RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp)), color = Pal.Card) {
+                Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Pal.Accent2, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Processing prompt...", fontSize = 12.sp, color = Pal.Text2)
+                }
+            }
+        }
+        return
+    }
     val thinking = remember(text) { text.contains("<think>") && !text.contains("</think>") }
     val dots = rememberInfiniteTransition(label = "d").animateFloat(0f, 3f, infiniteRepeatable(tween(1200)), label = "d")
 

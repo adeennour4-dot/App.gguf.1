@@ -8,24 +8,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 
 # ---------------------------------------------------------------------------
-# GPU Backends for Android
+# Android-optimized ARM CPU flags
+# ---------------------------------------------------------------------------
+# Target armv8.6-a with dotprod, i8mm, fp16 — covers most modern Android SoCs
+# (Snapdragon 8 Gen 2+, Dimensity 9200+, Exynos 2200+)
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(ARM_ARCH_FLAGS "-march=armv8.6-a+dotprod+i8mm+fp16")
+    set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   ${ARM_ARCH_FLAGS}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARM_ARCH_FLAGS}")
+endif()
+
+# ---------------------------------------------------------------------------
+# llama.cpp build options
 # ---------------------------------------------------------------------------
 
+# GPU backends
 option(GGML_VULKAN "Enable Vulkan GPU backend" ON)
-option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)
+option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)  # requires OpenCL headers not in NDK
 
-# llama.cpp build options
-set(GGML_OPENMP    OFF CACHE BOOL "" FORCE)
-set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
-set(GGML_BACKEND_DL  OFF CACHE BOOL "" FORCE)
+# CPU optimizations
+set(GGML_CPU_KLEIDIAI   ON  CACHE BOOL "" FORCE)  # KleidiAI ARM micro-kernels
+
+set(GGML_OPENMP        OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE     OFF CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL    OFF CACHE BOOL "" FORCE)   # static linking, no dynamic backend loading
 set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_FLASH_ATTN ON CACHE BOOL "" FORCE)
-
-if(GGML_OPENCL)
-    set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
-    set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
-endif()
 
 # ---------------------------------------------------------------------------
 # Vulkan dependency: SPIRV-Headers
@@ -39,17 +48,17 @@ if(GGML_VULKAN)
 endif()
 
 # ---------------------------------------------------------------------------
-# Fetch llama.cpp
+# Fetch llama.cpp — pinned to stable release b9474 (2026-06-02)
 # ---------------------------------------------------------------------------
 FetchContent_Declare(
     llama
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG        master
+    GIT_TAG        b9474
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(llama)
 
-message(STATUS "Build config — Vulkan: ${GGML_VULKAN} | OpenCL: ${GGML_OPENCL}")
+message(STATUS "Build config — Vulkan: ${GGML_VULKAN} | OpenCL: ${GGML_OPENCL} | KleidiAI: ${GGML_CPU_KLEIDIAI} | tag: b9474")
 
 # ---------------------------------------------------------------------------
 # Fetch MNN (Alibaba MNN-LLM)

@@ -31,6 +31,7 @@ class LlamaCppEngine : InferenceEngine {
     override fun setConfig(config: InferenceEngine.Config) {
         EngineCore.setEngineConfig(EngineCore.Config(
             nCtx = config.nCtx,
+            nBatch = config.nBatch,
             maxNewTokens = config.maxNewTokens,
             temperature = config.temperature,
             topP = config.topP,

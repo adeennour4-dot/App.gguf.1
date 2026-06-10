@@ -12,6 +12,7 @@ interface InferenceEngine {
 
     data class Config(
         val nCtx: Int = 8192,
+        val nBatch: Int = 2048,
         val maxNewTokens: Int = 4096,
         val temperature: Float = 0.7f,
         val topP: Float = 0.9f,

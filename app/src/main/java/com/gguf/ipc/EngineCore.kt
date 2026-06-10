@@ -39,7 +39,7 @@ object EngineCore {
     external  fun abortInferenceNative()
 
     external fun setEngineConfigNative(
-        nCtx: Int, maxNewTokens: Int, temperature: Float,
+        nCtx: Int, nBatch: Int, maxNewTokens: Int, temperature: Float,
         topP: Float, minP: Float, nGpuLayers: Int, nThreads: Int, seed: Int
     )
     external fun setSystemPromptNative(prompt: String)
@@ -71,6 +71,7 @@ object EngineCore {
     // -----------------------------------------------------------------------
     data class Config(
         val nCtx: Int          = 8192,
+        val nBatch: Int        = 2048,
         val maxNewTokens: Int  = 4096,
         val temperature: Float = 0.7f,
         val topP: Float        = 0.9f,
@@ -88,7 +89,7 @@ object EngineCore {
 
     fun setEngineConfig(cfg: Config) {
         setEngineConfigNative(
-            cfg.nCtx, cfg.maxNewTokens,
+            cfg.nCtx, cfg.nBatch, cfg.maxNewTokens,
             cfg.temperature, cfg.topP, cfg.minP,
             cfg.nGpuLayers, cfg.nThreads, cfg.seed
         )

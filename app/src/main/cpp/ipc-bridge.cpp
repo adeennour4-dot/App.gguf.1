@@ -68,7 +68,7 @@ static_assert(sizeof(SharedRingBuffer) == 16 + TOKEN_STREAM_SIZE, "Layout mismat
 // ---------------------------------------------------------------------------
 struct EngineConfig {
     int      n_ctx          = 8192;
-    int      n_batch        = 512;
+    int      n_batch        = 2048;
     int      n_threads      = 4;
     int      n_gpu_layers   = 99;
     int      max_new_tokens = 4096;
@@ -292,13 +292,15 @@ Java_com_gguf_ipc_EngineCore_initializeSharedMemoryNative(JNIEnv*, jobject) {
 
 // ---------------------------------------------------------------------------
 // JNI — setEngineConfigNative
+// v6: accepts nBatch parameter
 // ---------------------------------------------------------------------------
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_setEngineConfigNative(
         JNIEnv*, jobject,
-        jint nCtx, jint maxNewTokens, jfloat temp,
+        jint nCtx, jint nBatch, jint maxNewTokens, jfloat temp,
         jfloat topP, jfloat minP, jint nGpuLayers, jint nThreads, jint seed) {
     g_cfg.n_ctx          = nCtx;
+    g_cfg.n_batch        = (nBatch > 0) ? nBatch : 2048;
     g_cfg.max_new_tokens = maxNewTokens;
     g_cfg.temperature    = temp;
     g_cfg.top_p          = topP;
@@ -381,7 +383,12 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     cparams.n_ctx           = g_cfg.n_ctx;
     cparams.n_batch         = g_cfg.n_batch;
     cparams.n_threads       = g_cfg.n_threads;
-    cparams.n_threads_batch = g_cfg.n_threads; // v5: explicitly set batch threads
+    // Use all available cores for prompt evaluation (prefill is highly parallelizable)
+    {
+        int total = (int)std::thread::hardware_concurrency();
+        if (total < 1) total = 4;
+        cparams.n_threads_batch = std::max(total, g_cfg.n_threads);
+    }
 
     // v5: llama_init_from_model replaces deprecated llama_new_context_with_model
     g_ctx = llama_init_from_model(g_model, cparams);
