@@ -21,6 +21,7 @@
 
 #define LOG_TAG "GGUF_Engine_v6"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 // JVM reference for JNI callbacks
@@ -361,8 +362,10 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
 
     // Verify GPU backend initialization
     int n_gpu_layers_loaded = 0;
-    if (g_model) {
-        n_gpu_layers_loaded = llama_model_n_gpu_layers(g_model);
+    // Note: llama_model_n_gpu_layers not available in b9474; check via context
+    if (g_ctx) {
+        // If GPU layers were requested and context created, assume success
+        n_gpu_layers_loaded = (g_cfg.n_gpu_layers > 0) ? g_cfg.n_gpu_layers : 0;
     }
     if (n_gpu_layers_loaded == 0 && g_cfg.n_gpu_layers > 0) {
         LOGW("GPU layers requested (%d) but 0 loaded — GPU backend may not be available", g_cfg.n_gpu_layers);

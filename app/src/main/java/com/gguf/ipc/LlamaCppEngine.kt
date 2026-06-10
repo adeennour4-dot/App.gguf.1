@@ -14,6 +14,8 @@ class LlamaCppEngine : InferenceEngine {
     private var currentModelPath = ""
     private var kvCacheUsage = 0
 
+    private const val TAG = "LlamaCppEngine"
+
     // Callback-managed state
     private val partialStream = StringBuilder()
     private val fullResponse = StringBuilder()

@@ -42,14 +42,9 @@ class LiteRtEngine : InferenceEngine {
                 Log.w(TAG, "Could not enable speculative decoding: ${e.message}")
             }
 
-            // Try to use GPU backend by default, fall back to CPU
-            try {
-                val gpuBackend = Backend.GPU()
-                preferredBackend = gpuBackend
-                Log.i(TAG, "GPU backend available, using GPU")
-            } catch (e: Exception) {
-                Log.i(TAG, "GPU backend not available, using CPU")
-            }
+            // Use CPU backend (GPU/NPU backends require different initialization)
+            preferredBackend = Backend.CPU(null)
+            Log.i(TAG, "Using CPU backend")
         }
     }
 
