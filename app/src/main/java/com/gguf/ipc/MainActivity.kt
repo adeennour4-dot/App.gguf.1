@@ -97,17 +97,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    fun resolveMmapPath(uri: Uri): String? = try {
-        val pfd = contentResolver.openFileDescriptor(uri, "r") ?: return null
-        val dup = pfd.dup()
-        pfd.close()
-        val path = "/proc/self/fd/${dup.fd}"
-        // Keep dup alive until model loads; caller must close after use
-        pendingFds.add(dup)
-        path
+    fun copyUriToFiles(uri: Uri, filename: String, onProgress: (String) -> Unit): String? = try {
+        val cacheFile = File(filesDir, filename)
+        contentResolver.openInputStream(uri)?.use { input: InputStream ->
+            onProgress("Copying model...")
+            cacheFile.outputStream().use { input.copyTo(it, bufferSize = 8 * 1024 * 1024) }
+        }
+        cacheFile.absolutePath
     } catch (e: Exception) { null }
-
-    val pendingFds = mutableListOf<ParcelFileDescriptor>()
 }
 
 // ── Root Scaffold ────────────────────────────────────────────────────
@@ -217,17 +214,14 @@ fun AppScaffold() {
         if (result.resultCode == Activity.RESULT_OK) {
             result.data?.data?.let { uri ->
                 val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "model.gguf"
-                isLoading = true; modelLoaded = false; streamedText = ""; statusText = "Resolving..."
+                isLoading = true; modelLoaded = false; streamedText = ""; statusText = "Copying..."
                 scope.launch(Dispatchers.IO) {
-                    val path = activity.resolveMmapPath(uri)
-                    if (path == null) { withContext(Dispatchers.Main) { statusText = "Resolve failed"; isLoading = false }; return@launch }
+                    val path = activity.copyUriToFiles(uri, name) { msg -> scope.launch(Dispatchers.Main) { statusText = msg } }
+                    if (path == null) { withContext(Dispatchers.Main) { statusText = "Copy failed"; isLoading = false }; return@launch }
                     withContext(Dispatchers.Main) { statusText = "Loading..." }
                     val eng = EngineManager.getEngineForFormat(name)
                     eng.setConfig(SettingsManager.toConfig()); eng.setRepeatPenalty(SettingsManager.toRepeatPenaltyConfig()); eng.setSystemPrompt(SettingsManager.systemPrompt)
                     val ok = eng.loadModel(path)
-                    // Close pending fds after model loads
-                    activity.pendingFds.forEach { it.close() }
-                    activity.pendingFds.clear()
                     if (ok) modelInfo = eng.getModelInfo()
                     withContext(Dispatchers.Main) {
                         isLoading = false; modelLoaded = ok; filename = name
