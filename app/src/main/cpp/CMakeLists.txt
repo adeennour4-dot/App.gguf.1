@@ -33,8 +33,19 @@ if(GGML_OPENCL)
 endif()
 
 # ---------------------------------------------------------------------------
-# Fetch llama.cpp latest (June 2026)
-# Updated to latest for OpenCL Adreno support + multimodal (libmtmd)
+# Vulkan dependency: SPIRV-Headers (required by llama.cpp's ggml-vulkan)
+# Only enabled when building locally with Vulkan installed. CI builds CPU-only.
+# ---------------------------------------------------------------------------
+if(GGML_VULKAN)
+    find_package(SPIRV-Headers QUIET)
+    if(NOT SPIRV-Headers_FOUND)
+        message(WARNING "SPIRV-Headers not found, disabling Vulkan backend")
+        set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Fetch llama.cpp (pinned commit for stable Vulkan SPIRV-Headers support)
 # ---------------------------------------------------------------------------
 FetchContent_Declare(
     llama
@@ -43,6 +54,8 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(llama)
+
+message(STATUS "Build config — Vulkan: ${GGML_VULKAN} | OpenCL: ${GGML_OPENCL}")
 
 # ---------------------------------------------------------------------------
 # JNI shared library
@@ -64,24 +77,6 @@ target_link_libraries(ipc-bridge
         ${log-lib}
         ${android-lib}
 )
-
-# ---------------------------------------------------------------------------
-# Vulkan linking (Android system library)
-# On Android, Vulkan is loaded dynamically via the Vulkan loader
-# ---------------------------------------------------------------------------
-if(GGML_VULKAN)
-    # On Android, Vulkan is a system library - just link against it
-    # The Vulkan loader is at /system/lib64/libvulkan.so
-    find_library(Vulkan_LIB vulkan)
-    if(Vulkan_LIB)
-        target_link_libraries(ipc-bridge PRIVATE ${Vulkan_LIB})
-        target_compile_definitions(ipc-bridge PRIVATE GGML_VULKAN_ENABLED)
-        message(STATUS "Vulkan enabled: ${Vulkan_LIB}")
-    else()
-        message(WARNING "Vulkan not found, disabling Vulkan backend")
-        set(GGML_VULKAN OFF)
-    endif()
-endif()
 
 # ---------------------------------------------------------------------------
 # OpenCL linking (Android vendor library)
