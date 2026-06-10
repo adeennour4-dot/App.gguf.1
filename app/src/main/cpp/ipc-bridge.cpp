@@ -257,12 +257,12 @@ static std::string build_chat_prompt() {
         msgs.push_back({m.role.c_str(), m.content.c_str()});
 
     std::vector<char> buf(65536);
-    int n = llama_chat_apply_template(g_model, nullptr,
+    int n = llama_chat_apply_template(nullptr,
                                        msgs.data(), (int)msgs.size(),
                                        true, buf.data(), (int)buf.size());
     if (n > (int)buf.size()) {
         buf.resize(n + 1);
-        llama_chat_apply_template(g_model, nullptr,
+        llama_chat_apply_template(nullptr,
                                    msgs.data(), (int)msgs.size(),
                                    true, buf.data(), (int)buf.size());
     }
