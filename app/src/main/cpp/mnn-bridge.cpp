@@ -14,6 +14,7 @@
 
 // MNN-LLM C++ API
 #include "llm/llm.hpp"
+#include "nlohmann/json.hpp"
 
 using namespace MNN::Transformer;
 
