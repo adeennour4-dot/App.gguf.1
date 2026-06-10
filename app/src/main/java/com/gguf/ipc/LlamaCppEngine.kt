@@ -20,9 +20,6 @@ class LlamaCppEngine : InferenceEngine {
 
     // Callback-managed state
     private val partialStream = StringBuilder()
-
-    // Callback-managed state
-    private val partialStream = StringBuilder()
     private val fullResponse = StringBuilder()
     private val inferenceDone = AtomicBoolean(true)
     private val tokensGenerated = AtomicInteger(0)
