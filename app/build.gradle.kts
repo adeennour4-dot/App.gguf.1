@@ -82,5 +82,5 @@ dependencies {
 
     // LiteRT-LM (Google AI Edge) - for .tflite/.litertlm model support
     // Apache 2.0 license - allows commercial use
-    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:8.1")
 }
