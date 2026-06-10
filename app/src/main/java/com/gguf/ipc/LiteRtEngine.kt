@@ -1,6 +1,15 @@
 package com.gguf.ipc
 
+import android.util.Log
+import kotlinx.coroutines.*
 import org.json.JSONObject
+import java.io.Closeable
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * LiteRtEngine — InferenceEngine implementation using Google LiteRT-LM.
@@ -17,104 +26,234 @@ class LiteRtEngine : InferenceEngine {
         private set
 
     private var currentModelPath = ""
-    private var engine: Any? = null  // com.google.ai.edge.litertlm.Engine (loaded via reflection)
+    private var engine: Any? = null // com.google.ai.edge.litertlm.Engine
+    private var conversation: Any? = null // com.google.ai.edge.litertlm.Conversation
+
+    // Streaming state — thread-safe for JNI callback thread → polling thread
+    private val streamBuffer = StringBuilder()
+    private val fullResponse = StringBuilder()
+    private val inferenceDone = AtomicBoolean(false)
+    private val tokensGenerated = AtomicInteger(0)
+    private var currentJob: Job? = null
+    private var systemPrompt: String = ""
+
+    companion object {
+        private const val TAG = "LiteRtEngine"
+
+        // LiteRT-LM classes loaded via reflection to avoid compile-time dependency issues
+        private var engineClass: Class<*>? = null
+        private var engineConfigClass: Class<*>? = null
+        private var backendClass: Class<*>? = null
+        private var conversationClass: Class<*>? = null
+        private var messageCallbackClass: Class<*>? = null
+        private var messageClass: Class<*>? = null
+        private var contentsClass: Class<*>? = null
+
+        init {
+            try {
+                engineClass = Class.forName("com.google.ai.edge.litertlm.Engine")
+                engineConfigClass = Class.forName("com.google.ai.edge.litertlm.EngineConfig")
+                backendClass = Class.forName("com.google.ai.edge.litertlm.Backend")
+                conversationClass = Class.forName("com.google.ai.edge.litertlm.Conversation")
+                messageCallbackClass = Class.forName("com.google.ai.edge.litertlm.MessageCallback")
+                messageClass = Class.forName("com.google.ai.edge.litertlm.Message")
+                contentsClass = Class.forName("com.google.ai.edge.litertlm.Contents")
+                Log.i(TAG, "LiteRT-LM classes loaded successfully")
+            } catch (e: ClassNotFoundException) {
+                Log.e(TAG, "LiteRT-LM library not available: ${e.message}")
+            }
+        }
+    }
 
     override fun loadModel(path: String): Boolean {
         currentModelPath = path
         return try {
-            // LiteRT-LM integration via reflection to avoid compile-time dependency issues
-            // In production, this would use direct API calls:
-            //
-            // val engineConfig = EngineConfig(
-            //     modelPath = path,
-            //     backend = Backend.CPU()
-            // )
-            // engine = Engine(engineConfig)
+            val engCls = engineClass ?: return false
+            val cfgCls = engineConfigClass ?: return false
+            val bckCls = backendClass ?: return false
+
+            // Create Backend.CPU()
+            val cpuBackend = bckCls.getMethod("CPU").invoke(null)
+
+            // Create EngineConfig(modelPath, backend)
+            val config = cfgCls.getConstructor(String::class.java, javaClass)
+                .newInstance(path, cpuBackend)
+
+            // Create Engine(config)
+            val eng = engCls.getConstructor(cfgCls).newInstance(config)
+
             // engine.initialize()
-            // isModelLoaded = true
-            //
-            // For now, log that LiteRT-LM would be used
-            android.util.Log.i("LiteRtEngine", "LiteRT-LM model loading: $path")
-            android.util.Log.i("LiteRtEngine", "Note: Full LiteRT-LM integration requires runtime testing")
-            android.util.Log.i("LiteRtEngine", "Supported formats: .tflite, .litertlm")
-            android.util.Log.i("LiteRtEngine", "Backends: CPU, GPU (OpenCL), NPU (via NNAPI)")
+            engCls.getMethod("initialize").invoke(eng)
 
-            // TODO: Uncomment when LiteRT-LM AAR is properly integrated
-            // val engineConfig = com.google.ai.edge.litertlm.EngineConfig(
-            //     modelPath = path,
-            //     backend = com.google.ai.edge.litertlm.Backend.CPU()
-            // )
-            // val eng = com.google.ai.edge.litertlm.Engine(engineConfig)
-            // eng.initialize()
-            // engine = eng
-            // isModelLoaded = true
-
-            false  // Return false until full integration
+            engine = eng
+            isModelLoaded = true
+            Log.i(TAG, "LiteRT-LM model loaded: $path")
+            true
         } catch (e: Exception) {
-            android.util.Log.e("LiteRtEngine", "Failed to load model: ${e.message}")
+            Log.e(TAG, "Failed to load model: ${e.message}", e)
             false
         }
     }
 
     override fun unloadModel() {
-        // TODO: engine?.close()
+        try {
+            conversation?.let { conv ->
+                conversationClass?.getMethod("close")?.invoke(conv)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing conversation: ${e.message}")
+        }
+        try {
+            engine?.let { eng ->
+                engineClass?.getMethod("close")?.invoke(eng)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing engine: ${e.message}")
+        }
         engine = null
+        conversation = null
         isModelLoaded = false
         currentModelPath = ""
     }
 
     override fun setConfig(config: InferenceEngine.Config) {
-        android.util.Log.i("LiteRtEngine", "Config: ctx=${config.nCtx}, maxTokens=${config.maxNewTokens}")
-        // TODO: Apply config to LiteRT-LM engine
+        Log.i(TAG, "Config: ctx=${config.nCtx}, maxTokens=${config.maxNewTokens}")
     }
 
     override fun setRepeatPenalty(config: InferenceEngine.RepeatPenaltyConfig) {
-        android.util.Log.i("LiteRtEngine", "Repeat penalty: ${config.repeatPenalty}")
-        // TODO: Apply repeat penalty to LiteRT-LM engine
+        Log.i(TAG, "Repeat penalty: ${config.repeatPenalty}")
     }
 
     override fun setSystemPrompt(prompt: String) {
-        android.util.Log.i("LiteRtEngine", "System prompt set")
-        // TODO: Apply system prompt to LiteRT-LM engine
+        systemPrompt = prompt
+        Log.i(TAG, "System prompt set")
     }
 
     override fun executeInference(prompt: String) {
-        android.util.Log.i("LiteRtEngine", "Executing inference")
-        // TODO: Use LiteRT-LM Conversation API
-        // val conversation = engine.createConversation()
-        // conversation.addUserMessage(prompt)
-        // val response = conversation.generateResponse()
+        val eng = engine ?: return
+        val engCls = engineClass ?: return
+        val convCls = conversationClass ?: return
+        val msgCbCls = messageCallbackClass ?: return
+
+        // Reset streaming state
+        synchronized(streamBuffer) { streamBuffer.clear() }
+        fullResponse.clear()
+        inferenceDone.set(false)
+        tokensGenerated.set(0)
+
+        try {
+            // Create conversation if needed
+            if (conversation == null) {
+                val conv = engCls.getMethod("createConversation").invoke(eng)
+                conversation = conv
+            }
+
+            val conv = conversation!!
+
+            // Create Contents from prompt
+            // Contents.text(string) — try static method first
+            val contents = try {
+                val contentsCls = contentsClass!!
+                contentsCls.getMethod("text", String::class.java).invoke(null, prompt)
+            } catch (e: Exception) {
+                // Fallback: try constructing Contents differently
+                Log.w(TAG, "Contents.text() failed, trying alternative: ${e.message}")
+                // Some versions use Message.user(contents)
+                val msgCls = messageClass!!
+                val contentsCls = contentsClass!!
+                val contents = contentsCls.getMethod("text", String::class.java).invoke(null, prompt)
+                msgCls.getMethod("user", contentsCls).invoke(null, contents)
+            }
+
+            // Create MessageCallback via reflection
+            val callback = java.lang.reflect.Proxy.newProxyInstance(
+                msgCbCls.classLoader,
+                arrayOf(msgCbCls)
+            ) { _, method, args ->
+                when (method.name) {
+                    "onMessage" -> {
+                        val msg = args?.getOrNull(0)
+                        if (msg != null) {
+                            try {
+                                val text = messageClass?.getMethod("getText")?.invoke(msg) as? String ?: ""
+                                synchronized(streamBuffer) {
+                                    streamBuffer.clear()
+                                    streamBuffer.append(text)
+                                }
+                                fullResponse.clear()
+                                fullResponse.append(text)
+                                tokensGenerated.incrementAndGet()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error reading message text: ${e.message}")
+                            }
+                        }
+                    }
+                    "onDone" -> {
+                        inferenceDone.set(true)
+                        Log.i(TAG, "Inference done, tokens=${tokensGenerated.get()}")
+                    }
+                    "onError" -> {
+                        val throwable = args?.getOrNull(0) as? Throwable
+                        Log.e(TAG, "Inference error: ${throwable?.message}")
+                        inferenceDone.set(true)
+                    }
+                }
+                null
+            }
+
+            // conversation.sendMessageAsync(contents, callback)
+            // Try with Contents first, then with String
+            try {
+                convCls.getMethod("sendMessageAsync", contentsClass, msgCbCls)
+                    .invoke(conv, contents, callback)
+            } catch (e: NoSuchMethodException) {
+                // Some versions accept String directly
+                convCls.getMethod("sendMessageAsync", String::class.java, msgCbCls)
+                    .invoke(conv, prompt, callback)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to execute inference: ${e.message}", e)
+            inferenceDone.set(true)
+        }
     }
 
     override fun abortInference() {
-        android.util.Log.i("LiteRtEngine", "Abort requested")
-        // TODO: Abort LiteRT-LM generation
+        inferenceDone.set(true)
+        currentJob?.cancel()
+        Log.i(TAG, "Inference aborted")
     }
 
     override fun readPartialStream(): String {
-        // TODO: Implement streaming from LiteRT-LM
-        return ""
+        return synchronized(streamBuffer) { streamBuffer.toString() }
     }
 
     override fun readTokenStream(): String {
-        // TODO: Implement full stream from LiteRT-LM
-        return ""
+        return fullResponse.toString()
     }
 
-    override fun isInferenceDone(): Boolean {
-        return true  // TODO: Check LiteRT-LM generation state
-    }
+    override fun isInferenceDone(): Boolean = inferenceDone.get()
 
-    override fun getTokensGenerated(): Int {
-        return 0  // TODO: Get token count from LiteRT-LM
-    }
+    override fun getTokensGenerated(): Int = tokensGenerated.get()
 
     override fun getKvCacheUsage(): Int {
-        return 0  // TODO: Get KV cache usage from LiteRT-LM
+        // LiteRT-LM doesn't expose KV cache usage directly
+        return 0
     }
 
     override fun resetContext() {
-        // TODO: Reset LiteRT-LM conversation
+        try {
+            conversation?.let { conv ->
+                conversationClass?.getMethod("close")?.invoke(conv)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing conversation on reset: ${e.message}")
+        }
+        conversation = null
+        synchronized(streamBuffer) { streamBuffer.clear() }
+        fullResponse.clear()
+        inferenceDone.set(false)
+        tokensGenerated.set(0)
     }
 
     override fun getModelInfo(): JSONObject {
@@ -122,8 +261,10 @@ class LiteRtEngine : InferenceEngine {
             put("engine", "LiteRT-LM")
             put("model", currentModelPath)
             put("supported_formats", "tflite, litertlm")
-            put("backends", "CPU, GPU, NPU")
+            put("backends", "CPU, GPU (OpenCL), NPU (NNAPI)")
+            put("license", "Apache 2.0")
             put("status", if (isModelLoaded) "loaded" else "not loaded")
+            put("streaming", "callback-based")
         }
     }
 

@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 /**
  * EngineManager — Manages all inference engines and selects the best one.
- * Supports automatic engine selection based on file format and device capabilities.
+ * Supports llama.cpp (GGUF), MNN (.mnn), LiteRT-LM (.tflite/.litertlm).
  */
 object EngineManager {
 
@@ -14,19 +14,14 @@ object EngineManager {
     private var deviceInfo: DeviceUtils.DeviceInfo? = null
 
     fun init(context: Context) {
-        // Initialize all engines
         engines[InferenceEngine.EngineType.LLAMA_CPP] = LlamaCppEngine()
         engines[InferenceEngine.EngineType.MNN] = MnnEngine()
         engines[InferenceEngine.EngineType.LITER_T] = LiteRtEngine()
 
-        // Detect device
         deviceInfo = DeviceUtils.detectDevice(context)
-
-        // Initialize managers
         SettingsManager.init(context)
         ChatManager.init(context)
 
-        // Apply device-specific defaults if auto-detect is enabled
         if (SettingsManager.autoDetectDevice && deviceInfo != null) {
             SettingsManager.applyToDeviceDefaults(deviceInfo!!)
         }
@@ -34,40 +29,23 @@ object EngineManager {
 
     fun getDeviceInfo(): DeviceUtils.DeviceInfo? = deviceInfo
 
-    /**
-     * Get the best engine for a given file format.
-     */
     fun getEngineForFormat(filePath: String): InferenceEngine {
         return when {
             filePath.endsWith(".gguf", ignoreCase = true) -> engines[InferenceEngine.EngineType.LLAMA_CPP]!!
             filePath.endsWith(".mnn", ignoreCase = true) -> engines[InferenceEngine.EngineType.MNN]!!
             filePath.endsWith(".tflite", ignoreCase = true) ||
             filePath.endsWith(".litertlm", ignoreCase = true) -> engines[InferenceEngine.EngineType.LITER_T]!!
-            else -> engines[InferenceEngine.EngineType.LLAMA_CPP]!!  // Default to llama.cpp
+            else -> engines[InferenceEngine.EngineType.LLAMA_CPP]!!
         }
     }
 
-    /**
-     * Get the recommended engine based on device capabilities.
-     */
     fun getRecommendedEngine(): InferenceEngine.EngineType {
         if (deviceInfo == null) return InferenceEngine.EngineType.LLAMA_CPP
         return DeviceUtils.suggestEngine(deviceInfo!!)
     }
 
-    /**
-     * Load a model with the appropriate engine.
-     */
     fun loadModel(filePath: String): Boolean {
         val engine = getEngineForFormat(filePath)
-
-        // Check RAM before loading
-        val context = null  // Would need context parameter
-        // if (context != null && !DeviceUtils.canFitModel(context, estimatedSizeGB)) {
-        //     return false  // Not enough RAM
-        // }
-
-        // Apply settings
         engine.setConfig(SettingsManager.toConfig())
         engine.setRepeatPenalty(SettingsManager.toRepeatPenaltyConfig())
         engine.setSystemPrompt(SettingsManager.systemPrompt)
@@ -81,20 +59,10 @@ object EngineManager {
 
     fun getCurrentEngine(): InferenceEngine? = currentEngine
 
-    fun getEngine(type: InferenceEngine.EngineType): InferenceEngine? {
-        return engines[type]
-    }
+    fun getEngine(type: InferenceEngine.EngineType): InferenceEngine? = engines[type]
 
-    /**
-     * Get supported file extensions for all engines.
-     */
-    fun getSupportedExtensions(): Set<String> {
-        return setOf("gguf", "mnn", "tflite", "litertlm")
-    }
+    fun getSupportedExtensions(): Set<String> = setOf("gguf", "mnn", "tflite", "litertlm")
 
-    /**
-     * Get engine info as JSON.
-     */
     fun getEngineInfo(): JSONObject {
         val current = currentEngine
         return JSONObject().apply {
@@ -109,7 +77,7 @@ object EngineManager {
                 })
                 put("mnn", JSONObject().apply {
                     put("formats", "mnn")
-                    put("gpu_backends", "OpenCL, CPU")
+                    put("gpu_backends", "CPU (optimized)")
                     put("license", "Apache 2.0")
                 })
                 put("litert_lm", JSONObject().apply {
@@ -124,10 +92,6 @@ object EngineManager {
                     put("soc", info.socModel)
                     put("cpu_cores", info.cpuCores)
                     put("total_ram_mb", info.totalRamMB)
-                    put("is_snapdragon", info.isSnapdragon)
-                    put("is_exynos", info.isExynos)
-                    put("is_mediatek", info.isMediaTek)
-                    put("is_tensor", info.isTensor)
                 }
             })
         }

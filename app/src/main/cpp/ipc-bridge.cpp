@@ -87,13 +87,14 @@ struct EngineConfig {
 // ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
-static SharedRingBuffer* g_buffer   = nullptr;
-static int               g_shm_fd  = -1;
-static llama_model*      g_model   = nullptr;
-static llama_context*    g_ctx     = nullptr;
-static llama_sampler*    g_sampler = nullptr;
-static EngineConfig      g_cfg;
-static std::atomic<bool> g_abort { false };
+    static SharedRingBuffer* g_buffer   = nullptr;
+    static int               g_shm_fd  = -1;
+    static llama_model*      g_model   = nullptr;
+    static llama_context*    g_ctx     = nullptr;
+    static llama_sampler*    g_sampler = nullptr;
+    static EngineConfig      g_cfg;
+    static std::atomic<bool> g_abort { false };
+    static bool              g_backend_initialized = false;
 
 struct Message { std::string role; std::string content; };
 static std::vector<Message> g_history;
@@ -182,7 +183,9 @@ static void pin_to_all_cores() {
 #ifdef __aarch64__
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    for (int cpu = 0; cpu < 8; cpu++) {
+    int ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncpu <= 0) ncpu = 8;
+    for (int cpu = 0; cpu < ncpu; cpu++) {
         CPU_SET(cpu, &cpuset);
     }
 
@@ -353,6 +356,13 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring path) {
     const char* filePath = env->GetStringUTFChars(path, nullptr);
     if (!filePath) return JNI_FALSE;
+
+    // Initialize llama.cpp backend once (required before any API calls)
+    if (!g_backend_initialized) {
+        llama_backend_init();
+        g_backend_initialized = true;
+        LOGI("llama_backend_init() called");
+    }
 
     // Free previous model
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }

@@ -18,8 +18,8 @@ android {
         externalNativeBuild {
             cmake {
                 // Performance flags: ThinLTO, CRC instruction, no stack protector
-                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector")
-                cFlags  ("-O3 -flto=thin -march=armv8.4a+dotprod+crc -fno-stack-protector")
+                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.7a -fno-stack-protector")
+                cFlags  ("-O3 -flto=thin -march=armv8.7a -fno-stack-protector")
                 arguments(
                     "-DANDROID_STL=c++_shared",
                     "-DGGML_OPENMP=OFF",
