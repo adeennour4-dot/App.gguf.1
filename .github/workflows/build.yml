@@ -46,8 +46,8 @@ jobs:
           path: |
             app/.cxx
             app/build/_deps
-          key: cmake-deps-v6-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
-          restore-keys: cmake-deps-v6-
+          key: cmake-deps-v7-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
+          restore-keys: cmake-deps-v7-
 
       - name: Cache Gradle dependencies (LiteRT-LM + Compose)
         uses: actions/cache@v4
@@ -55,8 +55,8 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-deps-v6-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: gradle-deps-v6-
+          key: gradle-deps-v7-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-deps-v7-
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -64,7 +64,7 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
