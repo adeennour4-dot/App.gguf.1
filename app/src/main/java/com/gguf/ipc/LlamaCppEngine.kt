@@ -1,11 +1,9 @@
 package com.gguf.ipc
 
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * LlamaCppEngine — InferenceEngine implementation using llama.cpp via JNI.
- * Supports GGUF models with Vulkan (Mali/Xclipse) or OpenCL (Adreno) GPU backends.
- */
 class LlamaCppEngine : InferenceEngine {
 
     override val engineType = InferenceEngine.EngineType.LLAMA_CPP
@@ -14,6 +12,13 @@ class LlamaCppEngine : InferenceEngine {
         private set
 
     private var currentModelPath = ""
+    private var kvCacheUsage = 0
+
+    // Callback-managed state
+    private val partialStream = StringBuilder()
+    private val fullResponse = StringBuilder()
+    private val inferenceDone = AtomicBoolean(true)
+    private val tokensGenerated = AtomicInteger(0)
 
     override fun loadModel(path: String): Boolean {
         currentModelPath = path
@@ -55,7 +60,36 @@ class LlamaCppEngine : InferenceEngine {
     }
 
     override fun executeInference(prompt: String) {
-        EngineCore.executeZeroCopyInference(prompt)
+        synchronized(partialStream) {
+            partialStream.clear()
+            fullResponse.clear()
+        }
+        inferenceDone.set(false)
+        tokensGenerated.set(0)
+
+        val cb = object : EngineCore.TokenCallback {
+            override fun onToken(token: String) {
+                synchronized(partialStream) {
+                    partialStream.append(token)
+                    fullResponse.append(token)
+                }
+            }
+            override fun onDone() {
+                inferenceDone.set(true)
+            }
+            override fun onError(error: String) {
+                android.util.Log.e(TAG, "Inference error: $error")
+                inferenceDone.set(true)
+            }
+            override fun onKvCacheUsage(percent: Int) {
+                kvCacheUsage = percent
+            }
+            override fun onTokensGenerated(count: Int) {
+                tokensGenerated.set(count)
+            }
+        }
+
+        EngineCore.executeWithCallbackNative(prompt, cb)
     }
 
     override fun abortInference() {
@@ -63,27 +97,29 @@ class LlamaCppEngine : InferenceEngine {
     }
 
     override fun readPartialStream(): String {
-        return EngineCore.readPartialStream()
+        return synchronized(partialStream) {
+            val s = partialStream.toString()
+            partialStream.clear()
+            s
+        }
     }
 
     override fun readTokenStream(): String {
-        return EngineCore.readTokenStream()
+        return synchronized(partialStream) { fullResponse.toString() }
     }
 
-    override fun isInferenceDone(): Boolean {
-        return EngineCore.isInferenceDone()
-    }
+    override fun isInferenceDone(): Boolean = inferenceDone.get()
 
-    override fun getTokensGenerated(): Int {
-        return EngineCore.getTokensGenerated()
-    }
+    override fun getTokensGenerated(): Int = tokensGenerated.get()
 
-    override fun getKvCacheUsage(): Int {
-        return EngineCore.getKvCacheUsageNative()
-    }
+    override fun getKvCacheUsage(): Int = kvCacheUsage
 
     override fun resetContext() {
         EngineCore.resetContextNative()
+        synchronized(partialStream) { partialStream.clear(); fullResponse.clear() }
+        inferenceDone.set(true)
+        tokensGenerated.set(0)
+        kvCacheUsage = 0
     }
 
     override fun getModelInfo(): JSONObject {

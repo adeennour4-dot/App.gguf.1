@@ -58,7 +58,7 @@ object SettingsManager {
         set(value) = prefs?.edit()?.putInt(Keys.GPU_LAYERS, value)?.apply() ?: Unit
 
     var threads: Int
-        get() = prefs?.getInt(Keys.THREADS, 4) ?: 4
+        get() = prefs?.getInt(Keys.THREADS, 0) ?: 0
         set(value) = prefs?.edit()?.putInt(Keys.THREADS, value)?.apply() ?: Unit
 
     var repeatPenalty: Float

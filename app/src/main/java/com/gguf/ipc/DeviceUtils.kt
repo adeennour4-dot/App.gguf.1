@@ -88,7 +88,7 @@ object DeviceUtils {
         val suggestedGpuLayers = when {
             deviceInfo.isSnapdragon -> 99   // OpenCL works well on Adreno
             deviceInfo.isMediaTek -> 0     // Mali OpenCL often slower than CPU
-            deviceInfo.isExynos -> 0       // Xclipse Vulkan unstable
+            deviceInfo.isExynos -> 99      // Xclipse 920 Vulkan works on Exynos 2200+
             deviceInfo.isTensor -> 0       // Mali Vulkan varies
             else -> 0                      // Unknown GPU, be conservative
         }
@@ -111,7 +111,7 @@ object DeviceUtils {
             topP = 0.9f,
             minP = 0.05f,
             nGpuLayers = suggestedGpuLayers,
-            nThreads = suggestedThreads,
+            nThreads = 0,  // 0 = auto (all cores)
             seed = -1
         )
     }
