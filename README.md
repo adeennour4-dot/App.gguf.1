@@ -1,140 +1,138 @@
-# GGUF ZeroCopy v5 PRO
+# GGUF ZeroCopy v6
 
-On-Device Inference, Re-engineered.
+Android LLM inference app with multi-engine support (llama.cpp, MNN, LiteRT-LM) and multimodal capabilities.
 
-GGUF ZeroCopy is a high-performance, production-ready inference engine for Android. Using a zero-copy shared memory architecture, it delivers real-time LLM responses with minimal latency and maximum hardware utilization. Toolneuron-inspired UI with 5-screen navigation.
+## What's New in v6
 
----
+### Multi-Engine Support
+| Engine | Format | License | Best For |
+|--------|--------|---------|----------|
+| **llama.cpp** | .gguf | MIT | GPU acceleration (Vulkan/OpenCL), widest compatibility |
+| **MNN** | .mnn | Apache 2.0 | CPU-optimized (8.6x faster than llama.cpp CPU) |
+| **LiteRT-LM** | .tflite/.litertlm | Apache 2.0 | Google models, NPU access |
 
-## What's New in v5 PRO
+### Performance Optimizations (All Open Source)
+- **Big core pinning** — `sched_setaffinity()` to ARM big cores for maximum single-thread performance
+- **Process priority boost** — `setpriority(PRIO_PROCESS, 0, -20)` for maximum throughput
+- **RAM locking** — `mlockall()` to prevent page faults during inference
+- **ThinLTO compilation** — `-O3 -flto=thin` for faster builds and better optimization
+- **ARM instruction set** — `-march=armv8.4a+dotprod+crc` for best ARM performance
+- **No stack protector** — `-fno-stack-protector` (safe for inference workload)
+- **OpenCL for Adreno** — Qualcomm-contributed GPU backend (579 t/s prefill on 1.5B)
+- **Vulkan for Mali/Xclipse** — GPU acceleration for ARM and Samsung GPUs
 
-- **Extreme Performance**: Upgraded to llama.cpp b9542 with LLVM ThinLTO and DotProd acceleration
-- **KV-Cache Quantization**: Q8_0 Cache Quantization — 2x more context (16k+) in the same RAM footprint
-- **Glassmorphic Cyber-UI**: Bottom navigation (Chat / Models / Settings / Info / Bench) with real-time TPS telemetry
-- **Vulkan Unified Memory**: Direct GPU-memory mapping for ultra-low latency streaming
-- **Robust Foundation**: Gradle 9.5.1, NDK r29, Compose BOM 2026.05.00, AGP 9.1.1
-- **All APIs Fixed**: 15 missing EngineCore methods and JNI implementations fully resolved
-- **Benchmark Suite**: Prompt-processing + token-generation speed measurement with visual results
-- **Thinking Mode**: Collapsible `<think>` blocks with animated reasoning indicator
-- **Code Rendering**: Markdown code blocks rendered with syntax-friendly styling
-- **Quick Presets**: One-tap config for Qwen3, Gemma 4, Reasoning, and Creative modes
+### Device-Aware Auto-Configuration
+- Auto-detects CPU cores (big.LITTLE topology)
+- Auto-detects SoC (Snapdragon/Exynos/MediaTek/Tensor)
+- Suggests optimal GPU layers (99 for Snapdragon OpenCL, 0 for others)
+- Suggests optimal thread count based on big cores
+- Auto-sizes context window based on available RAM
+- Refuses to load model if insufficient RAM
 
----
+### Multimodal Support
+- **Vision**: LLaVA, Gemma 3 Vision, Qwen3-VL, Moondream 2 (via libmtmd)
+- **Audio**: whisper.cpp, Qwen2-Audio, Qwen2.5-Omni
+- **Embeddings**: nomic-embed-text, all-minilm, Qwen3-Embedding, BGE-M3
+- **Documents**: PDF, text, markdown, code files
+
+### UI Improvements
+- Material 3 dark theme with bottom navigation
+- Multi-session chat with persistence
+- Settings persistence (survives restarts)
+- New "ZC" monogram app icon
+- Supported formats notice in UI
+- License notices screen
+
+### Bug Fixes
+- Restored context shifting for long conversations
+- Restored chat history with llama_chat_apply_template
+- Restored full sampler chain (top_p, penalties)
+- Fixed token limit (uses config, not hardcoded)
+- Added settings persistence
+- Added chat session persistence
+- Added RAM check before model loading
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Kotlin / Compose UI (5 screens)                        │
-│  ┌──────┐ ┌──────┐ ┌────────┐ ┌────┐ ┌─────┐          │
-│  │ Chat │ │Models│ │Settings│ │Info│ │Bench│           │
-│  └──┬───┘ └──┬───┘ └───┬────┘ └─┬──┘ └──┬──┘          │
-│     │        │          │        │       │              │
-│  ┌──▼────────▼──────────▼────────▼───────▼──────────┐  │
-│  │              EngineCore (Singleton)               │  │
-│  │  JNI bridge · Config · Shared memory reader       │  │
-│  └─────────────────────┬────────────────────────────┘  │
-└────────────────────────┼──────────────────────────────┘
-                         │ JNI
-┌────────────────────────▼──────────────────────────────┐
-│  C++ ipc-bridge (llama.cpp b9542)                      │
-│  ┌───────────┐  ┌──────────┐  ┌────────────────────┐  │
-│  │ Model     │  │ Context  │  │ Shared Buffer Ring  │  │
-│  │ Loading   │  │ +Sampler │  │ (512KB, zero-copy)  │  │
-│  └───────────┘  └──────────┘  └────────────────────┘  │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │ llama.cpp + GGML Vulkan + Q8_0 KV-Cache + ThinLTO│  │
-│  └──────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────┘
+EngineManager
+├── LlamaCppEngine (GGUF, Vulkan/OpenCL/CPU)
+├── MnnEngine (MNN, CPU-optimized)
+└── LiteRtEngine (TFLite/LiteRT-LM, CPU/GPU/NPU)
+
+InferenceEngine (interface)
+├── loadModel()
+├── executeInference()
+├── readPartialStream()
+├── getModelInfo()
+├── benchmark()
+└── ...
+
+DeviceUtils (CPU/GPU/RAM detection)
+SettingsManager (SharedPreferences persistence)
+ChatManager (JSON file persistence)
+MultimodalHelper (image/audio/document handling)
+EmbeddingHelper (embedding model support)
 ```
 
----
+## Supported Models
 
-## Build Specs
+### Text LLMs
+| Model | Format | Engine |
+|-------|--------|--------|
+| Qwen3 / Qwen3.5 | GGUF / MNN | llama.cpp / MNN |
+| Gemma 4 | GGUF / LiteRT-LM | llama.cpp / LiteRT-LM |
+| Llama 3.2 | GGUF / MNN | llama.cpp / MNN |
+| DeepSeek R1 | GGUF / MNN | llama.cpp / MNN |
+| Phi-4 | GGUF / LiteRT-LM | llama.cpp / LiteRT-LM |
 
-| Component   | Version              |
-|-------------|----------------------|
-| Gradle      | 9.5.1                |
-| AGP         | 9.1.1                |
-| NDK         | 29.0.14206865        |
-| llama.cpp   | b9542 (June 2026)    |
-| Compose BOM | 2026.05.00           |
-| Kotlin      | 2.3.21               |
-| Min SDK     | 27                   |
-| Target SDK  | 36                   |
+### Vision Models
+| Model | Format | Engine |
+|-------|--------|--------|
+| LLaVA 1.5/1.6 | GGUF + mmproj | llama.cpp |
+| Gemma 3 Vision | GGUF + mmproj | llama.cpp |
+| Qwen3-VL | GGUF / MNN | llama.cpp / MNN |
+| Moondream 2 | GGUF + mmproj | llama.cpp |
 
----
+### Audio Models
+| Model | Format | Engine |
+|-------|--------|--------|
+| whisper.cpp | GGML | whisper.cpp |
+| Qwen2-Audio | MNN | MNN |
 
-## Quick Setup
+### Embedding Models
+| Model | Size | Dims | Format |
+|-------|------|------|--------|
+| all-minilm-L6-v2 | 46MB | 384 | GGUF |
+| nomic-embed-text v1.5 | 274MB | 768 | GGUF |
+| Qwen3-Embedding-0.6B | 400MB | 4096 | GGUF |
+| BGE-M3 | 1.2GB | 1024 | GGUF |
 
-### 1. Prerequisites
-
-- Android Studio Ladybug (or newer)
-- NDK r29 installed via SDK Manager
-- ~8 GB of free RAM for building (llama.cpp is large)
-
-### 2. Build
+## Building
 
 ```bash
-# Debug APK
-./gradlew assembleDebug --parallel --offline
-
-# Release APK
-./gradlew assembleRelease
+./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The first build will download llama.cpp (~1 GB) via CMake FetchContent — expect 15–30 minutes.
+## Requirements
 
-### 3. CI/CD
-
-This project includes a GitHub Actions workflow (`.github/workflows/build.yml`) that:
-- Installs SDK 36, NDK r29, CMake 3.22.1
-- Caches Gradle and CMake dependencies
-- Builds debug or release APK (configurable via workflow dispatch)
-- Uploads the APK as a build artifact (30-day retention)
-
-Push to `main`/`master` or trigger manually via **Actions → Build APK → Run workflow**.
-
----
-
-## Screens
-
-| Screen    | Description                                         |
-|-----------|-----------------------------------------------------|
-| **Chat**  | Streaming chat with thinking mode, code blocks, copy |
-| **Models**| Load/manage GGUF models, view device info + RAM      |
-| **Settings** | Temperature, top-p, min-p, penalties, system prompt |
-| **Info**  | Model metadata, architecture, session stats          |
-| **Bench** | PP + TG speed benchmark with visual results          |
-
----
-
-## Configuration Reference
-
-| Setting         | Optimal  | Description                          |
-|-----------------|----------|--------------------------------------|
-| n_ctx           | 8192     | Context window size                  |
-| n_gpu_layers    | 99       | Forces full Vulkan offload           |
-| type_k / type_v | Q8_0     | KV-Cache quantization (Pro Feature)  |
-| optimization    | ThinLTO  | Cross-module function inlining       |
-
----
-
-## Optimization Tips
-
-- **Vulkan Stability**: If the device crashes during boot, ensure the driver supports Vulkan 1.3
-- **Memory**: Always load models via `ACTION_OPEN_DOCUMENT` — this lets the engine mmap the FD directly (true zero-copy path)
-- **Build Speed**: Use `./gradlew assembleDebug --parallel --offline` with a warm Gradle cache
-- **Swap Models**: The "Swap" button in the top bar unloads the previous model before loading a new one
-
----
-
-## Project Map
-
-See `PROJECT_MAP.md` for a detailed file-by-file breakdown, architecture diagram, and pending features.
-
----
+- Android API ≥ 27 (Oreo)
+- arm64-v8a device
+- 4GB+ RAM (8GB+ recommended for 7B models)
+- Model files accessible via `content://` URI
 
 ## License
 
-Copyright © 2026 GGUF ZeroCopy Engine. Built for power users.
+This app is licensed under Apache 2.0.
+
+All dependencies are open source:
+- llama.cpp: MIT
+- ggml: MIT
+- MNN: Apache 2.0
+- LiteRT-LM: Apache 2.0
+- whisper.cpp: MIT
+- clip.cpp: MIT
+- Compose/AndroidX: Apache 2.0
+
+You can sell this app commercially. See LicenseNotices.kt for full license texts.

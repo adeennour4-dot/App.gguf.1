@@ -1,0 +1,38 @@
+GGUF ZeroCopy v6
+Copyright 2024-2026 GGUF ZeroCopy Contributors
+
+This product includes software developed by:
+- The ggml authors (llama.cpp) - MIT License
+- Alibaba Group (MNN) - Apache License 2.0
+- Google LLC (LiteRT-LM) - Apache License 2.0
+- The ggml authors (whisper.cpp) - MIT License
+
+This product is licensed under the Apache License 2.0.
+You may obtain a copy of the License at:
+http://www.apache.org/licenses/LICENSE-2.0
+
+Third-Party Licenses:
+
+1. llama.cpp (MIT License)
+   Copyright (c) 2023-2026 The ggml authors
+   https://github.com/ggml-org/llama.cpp
+
+2. ggml (MIT License)
+   Copyright (c) 2023-2026 The ggml authors
+   https://github.com/ggml-org/ggml
+
+3. MNN (Apache License 2.0)
+   Copyright 2018 Alibaba Group
+   https://github.com/alibaba/MNN
+
+4. LiteRT-LM (Apache License 2.0)
+   Copyright Google LLC
+   https://github.com/google-ai-edge/LiteRT-LM
+
+5. whisper.cpp (MIT License)
+   Copyright (c) 2023 The ggml authors
+   https://github.com/ggml-org/whisper.cpp
+
+6. AndroidX Libraries (Apache License 2.0)
+   Copyright The Android Open Source Project
+   https://developer.android.com/jetpack/androidx

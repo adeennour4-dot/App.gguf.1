@@ -4,42 +4,25 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer glow -->
-    <path
-        android:fillColor="#1A3A5C"
-        android:pathData="M54,10A44,44 0,1 1,10,54A44,44 0,1 1,54,10z" />
-    <!-- Gradient ring -->
-    <path
-        android:fillColor="#22D3EE"
-        android:pathData="M54,14A40,40 0,1 1,14,54A40,40 0,1 1,54,14z"
-        android:fillAlpha="0.12" />
-    <!-- Outer ring -->
-    <path
-        android:strokeColor="#22D3EE"
-        android:strokeWidth="2.5"
-        android:fillColor="#00000000"
-        android:pathData="M54,18A36,36 0,1 1,18,54A36,36 0,1 1,54,18z" />
-    <!-- Brain/nodes icon -->
-    <path
-        android:fillColor="#22D3EE"
-        android:fillAlpha="0.9"
-        android:pathData="M54,30C45,30 38,36 38,44C38,48 40,52 43,54L40,66L50,60C51,60 52,60 54,60C63,60 70,53 70,44C70,36 63,30 54,30Z" />
-    <!-- Inner brain -->
+    <!-- Dark background -->
     <path
         android:fillColor="#080C14"
-        android:pathData="M54,34C48,34 43,38 43,44C43,47 44,50 47,52L45,60L52,56C53,56 53,56 54,56C60,56 65,51 65,44C65,38 60,34 54,34Z" />
-    <!-- Neural nodes -->
-    <path android:fillColor="#34D399" android:pathData="M36,38m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
-    <path android:fillColor="#34D399" android:pathData="M54,28m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
-    <path android:fillColor="#34D399" android:pathData="M72,38m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
-    <path android:fillColor="#A78BFA" android:pathData="M36,68m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
-    <path android:fillColor="#A78BFA" android:pathData="M72,68m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
-    <path android:fillColor="#FBBF24" android:pathData="M54,76m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
-    <!-- Neural connections -->
-    <path android:strokeColor="#34D399" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6"
-        android:pathData="M36,38L43,44M54,28L51,34M72,38L65,44" />
-    <path android:strokeColor="#A78BFA" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6"
-        android:pathData="M36,68L47,56M72,68L61,56" />
-    <path android:strokeColor="#FBBF24" android:strokeWidth="1.5" android:fillColor="#00000000" android:strokeAlpha="0.6"
-        android:pathData="M54,76L54,60" />
+        android:pathData="M0,0h108v108h-108z" />
+    <!-- Cyan accent circle -->
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0" />
+    <!-- Z letter -->
+    <path
+        android:fillColor="#080C14"
+        android:pathData="M38,38h22l-22,32h22"
+        android:strokeColor="#080C14"
+        android:strokeWidth="5" />
+    <!-- C letter -->
+    <path
+        android:fillColor="#080C14"
+        android:pathData="M62,38 Q72,38 72,48 Q72,58 62,58"
+        android:strokeColor="#080C14"
+        android:strokeWidth="5"
+        android:fillAlpha="0" />
 </vector>

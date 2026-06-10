@@ -1,216 +1,194 @@
 package com.gguf.ipc
 
+import android.app.ActivityManager
+import android.content.Context
 import android.os.Build
 import java.io.File
 
+/**
+ * DeviceUtils — Detects CPU, GPU, RAM, and suggests optimal inference settings.
+ * All detection is done via public Android APIs and /proc filesystem.
+ */
 object DeviceUtils {
 
-    data class CpuInfo(
-        val cores: Int,
-        val architecture: String,
-        val features: List<String>,
-        val isBigLittle: Boolean,
-        val maxFrequencyMHz: Int,
-        val suggestedThreads: Int,
-        val suggestedGpuLayers: Int,
-        val cpuPartNames: List<String>
+    data class DeviceInfo(
+        val cpuModel: String = "",
+        val cpuCores: Int = Runtime.getRuntime().availableProcessors(),
+        val cpuMaxFreq: Int = 0,
+        val bigCores: List<Int> = emptyList(),
+        val littleCores: List<Int> = emptyList(),
+        val gpuVendor: String = "",
+        val gpuRenderer: String = "",
+        val totalRamMB: Long = 0,
+        val availableRamMB: Long = 0,
+        val isSnapdragon: Boolean = false,
+        val isExynos: Boolean = false,
+        val isMediaTek: Boolean = false,
+        val isTensor: Boolean = false,
+        val socModel: String = ""
     )
 
-    data class GpuInfo(
-        val renderer: String,
-        val vendor: String,
-        val version: String,
-        val hasVulkan: Boolean
-    )
+    /**
+     * Detect complete device information.
+     */
+    fun detectDevice(context: Context): DeviceInfo {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(memInfo)
 
-    fun detectCpu(): CpuInfo {
-        val cpuInfoText = readProcCpuInfo()
-        val cores = countCpuCores()
-        val features = parseCpuFeatures(cpuInfoText)
-        val isBigLittle = detectBigLittle()
-        val maxFreq = readMaxCpuFreq()
-        val partNames = extractPartNames(cpuInfoText)
-        val suggestedThreads = calculateSuggestedThreads(cores, isBigLittle)
-        val suggestedGpuLayers = calculateSuggestedGpuLayers()
-        val arch = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+        val totalRamMB = memInfo.totalMem / (1024 * 1024)
+        val availableRamMB = memInfo.availMem / (1024 * 1024)
 
-        return CpuInfo(
-            cores = cores,
-            architecture = arch,
-            features = features,
-            isBigLittle = isBigLittle,
-            maxFrequencyMHz = maxFreq,
-            suggestedThreads = suggestedThreads,
-            suggestedGpuLayers = suggestedGpuLayers,
-            cpuPartNames = partNames
+        val cpuModel = getCpuModel()
+        val cpuCores = Runtime.getRuntime().availableProcessors()
+        val cpuMaxFreq = getCpuMaxFreq()
+        val bigCores = detectBigCores()
+        val littleCores = (0 until cpuCores).filter { it !in bigCores }
+
+        val socModel = Build.SOC_MODEL ?: Build.HARDWARE ?: "unknown"
+        val isSnapdragon = socModel.lowercase().contains("snapdragon") ||
+                socModel.lowercase().contains("qcom") ||
+                Build.MANUFACTURER.lowercase().contains("qualcomm")
+        val isExynos = socModel.lowercase().contains("exynos") ||
+                Build.MANUFACTURER.lowercase().contains("samsung")
+        val isMediaTek = socModel.lowercase().contains("mt") ||
+                socModel.lowercase().contains("dimensity") ||
+                Build.MANUFACTURER.lowercase().contains("mediatek")
+        val isTensor = socModel.lowercase().contains("tensor") ||
+                Build.MANUFACTURER.lowercase().contains("google")
+
+        return DeviceInfo(
+            cpuModel = cpuModel,
+            cpuCores = cpuCores,
+            cpuMaxFreq = cpuMaxFreq,
+            bigCores = bigCores,
+            littleCores = littleCores,
+            gpuVendor = "", // Would need GLSurfaceView to detect
+            gpuRenderer = "", // Would need GLSurfaceView to detect
+            totalRamMB = totalRamMB,
+            availableRamMB = availableRamMB,
+            isSnapdragon = isSnapdragon,
+            isExynos = isExynos,
+            isMediaTek = isMediaTek,
+            isTensor = isTensor,
+            socModel = socModel
         )
     }
 
-    fun detectGpu(): GpuInfo {
-        val renderer = Build.MODEL
-        val vendor = Build.MANUFACTURER
-        val soc = Build.HARDWARE
-        return GpuInfo(
-            renderer = renderer,
-            vendor = vendor,
-            version = soc,
-            hasVulkan = vulkanAvailable()
+    /**
+     * Suggest optimal configuration based on device.
+     */
+    fun suggestConfig(deviceInfo: DeviceInfo, modelSizeB: Float = 7f): InferenceEngine.Config {
+        val suggestedThreads = if (deviceInfo.bigCores.isNotEmpty()) {
+            deviceInfo.bigCores.size.coerceAtMost(4)
+        } else {
+            (deviceInfo.cpuCores / 2).coerceIn(1, 4)
+        }
+
+        val suggestedGpuLayers = when {
+            deviceInfo.isSnapdragon -> 99   // OpenCL works well on Adreno
+            deviceInfo.isMediaTek -> 0     // Mali OpenCL often slower than CPU
+            deviceInfo.isExynos -> 0       // Xclipse Vulkan unstable
+            deviceInfo.isTensor -> 0       // Mali Vulkan varies
+            else -> 0                      // Unknown GPU, be conservative
+        }
+
+        // Context size based on available RAM and model size
+        val estimatedModelRAM = modelSizeB * 1024 * 0.6f // Rough estimate: 60% of model params in MB
+        val availableForContext = (deviceInfo.availableRamMB - estimatedModelRAM).coerceAtLeast(512f)
+        val suggestedCtx = when {
+            modelSizeB <= 1f -> 8192
+            modelSizeB <= 3f -> 4096
+            modelSizeB <= 7f -> 2048
+            else -> 1024
+        }.coerceAtMost((availableForContext / 4).toInt()) // ~4 bytes per token in KV cache
+
+        return InferenceEngine.Config(
+            nCtx = suggestedCtx,
+            maxNewTokens = 2048,
+            temperature = 0.7f,
+            topP = 0.9f,
+            minP = 0.05f,
+            nGpuLayers = suggestedGpuLayers,
+            nThreads = suggestedThreads,
+            seed = -1
         )
     }
 
-    fun vramBytes(): Long {
-        val memInfo = readProcMemInfo()
-        return memInfo["MemTotal"]?.toLongOrNull()?.times(1024) ?: 0L
+    /**
+     * Check if device has enough RAM to load a model of given size (in GB).
+     */
+    fun canFitModel(context: Context, modelSizeGB: Float, safetyMargin: Float = 0.8f): Boolean {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(memInfo)
+        val availableMB = memInfo.availMem / (1024 * 1024)
+        val requiredMB = (modelSizeGB * 1024 * 1.2f) // 20% overhead for inference
+        return availableMB > requiredMB / safetyMargin
     }
 
-    fun autoConfigJson(): String {
-        val cpu = detectCpu()
-        return """{
-  "n_threads": ${cpu.suggestedThreads},
-  "n_gpu_layers": ${cpu.suggestedGpuLayers},
-  "n_ctx": 8192,
-  "n_batch": 2048,
-  "max_new_tokens": ${if (cpu.suggestedGpuLayers > 0) 4096 else 2048},
-  "temperature": 0.7,
-  "top_p": 0.9,
-  "min_p": 0.05,
-  "repeat_penalty": 1.1,
-  "freq_penalty": 0.0,
-  "pres_penalty": 0.0,
-  "description": "${cpu.cores} cores | ${cpu.architecture} | ${if (cpu.isBigLittle) "big.LITTLE" else "homogenous"}"
-}"""
+    /**
+     * Get CPU model name from /proc/cpuinfo.
+     */
+    private fun getCpuModel(): String {
+        return try {
+            File("/proc/cpuinfo").readLines()
+                .firstOrNull { it.startsWith("Hardware") || it.startsWith("model name") }
+                ?.substringAfter(":")?.trim()
+                ?: Build.HARDWARE
+        } catch (e: Exception) {
+            Build.HARDWARE
+        }
     }
 
-    // ── Private helpers ──
-
-    private fun readProcCpuInfo(): String =
-        try { File("/proc/cpuinfo").readText() } catch (_: Exception) { "" }
-
-    private fun readProcMemInfo(): Map<String, String> {
-        val map = mutableMapOf<String, String>()
-        try {
-            File("/proc/meminfo").readLines().forEach { line ->
-                val parts = line.split(":")
-                if (parts.size == 2) map[parts[0].trim()] = parts[1].trim().removeSuffix(" kB")
-            }
-        } catch (_: Exception) {}
-        return map
-    }
-
-    private fun countCpuCores(): Int {
-        try {
-            val possible = File("/sys/devices/system/cpu/possible").readText().trim()
-            val range = possible.substringAfter("0-").toIntOrNull()
-            if (range != null) return range + 1
-        } catch (_: Exception) {}
-        return Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-    }
-
-    private fun detectBigLittle(): Boolean {
-        try {
-            val present = File("/sys/devices/system/cpu/present").readText().trim()
-            val parts = present.split("-")
-            if (parts.size == 2) {
-                val total = parts[1].toIntOrNull() ?: return false
-                var maxFreq = 0
-                var minFreq = Int.MAX_VALUE
-                for (i in 0..total) {
-                    val f = cpuMaxFreq(i)
-                    if (f > 0) {
-                        if (f > maxFreq) maxFreq = f
-                        if (f < minFreq) minFreq = f
-                    }
-                }
-                return minFreq < Int.MAX_VALUE && maxFreq > 0 && (maxFreq.toFloat() / minFreq) > 1.4f
-            }
-        } catch (_: Exception) {}
-        return false
-    }
-
-    private fun cpuMaxFreq(cpu: Int): Int {
-        val paths = listOf(
-            "/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq",
-            "/sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_max_freq"
-        )
-        for (p in paths) {
+    /**
+     * Get maximum CPU frequency.
+     */
+    private fun getCpuMaxFreq(): Int {
+        var maxFreq = 0
+        for (cpu in 0 until Runtime.getRuntime().availableProcessors()) {
             try {
-                return File(p).readText().trim().toIntOrNull()?.div(1000) ?: 0
+                val freq = File("/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq")
+                    .readText().trim().toIntOrNull() ?: 0
+                if (freq > maxFreq) maxFreq = freq
             } catch (_: Exception) {}
         }
-        return 0
+        return maxFreq
     }
 
-    private fun readMaxCpuFreq(): Int {
-        try {
-            val present = File("/sys/devices/system/cpu/present").readText().trim()
-            val parts = present.split("-")
-            if (parts.size == 2) {
-                val total = parts[1].toIntOrNull() ?: return 0
-                var maxFreq = 0
-                for (i in 0..total) {
-                    val f = cpuMaxFreq(i)
-                    if (f > maxFreq) maxFreq = f
-                }
-                return maxFreq
-            }
-        } catch (_: Exception) {}
-        return 0
-    }
+    /**
+     * Detect big cores on ARM big.LITTLE architecture.
+     */
+    private fun detectBigCores(): List<Int> {
+        val coreFreqs = mutableListOf<Pair<Int, Int>>()
+        val cpuCount = Runtime.getRuntime().availableProcessors()
 
-    private fun parseCpuFeatures(text: String): List<String> {
-        val features = mutableListOf<String>()
-        text.lines().forEach { line ->
-            if (line.trimStart().startsWith("Features")) {
-                val vals = line.substringAfter(":").trim().split("\\s+".toRegex())
-                features.addAll(vals.filter { it.isNotEmpty() })
-            }
+        for (cpu in 0 until cpuCount) {
+            try {
+                val freq = File("/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq")
+                    .readText().trim().toIntOrNull() ?: 0
+                coreFreqs.add(cpu to freq)
+            } catch (_: Exception) {}
         }
-        return features.distinct()
+
+        if (coreFreqs.isEmpty()) return emptyList()
+
+        val maxFreq = coreFreqs.maxOfOrNull { it.second } ?: return emptyList()
+        val threshold = maxFreq * 80 / 100
+
+        return coreFreqs.filter { it.second >= threshold }.map { it.first }
     }
 
-    private fun extractPartNames(text: String): List<String> {
-        val parts = mutableListOf<String>()
-        text.lines().forEach { line ->
-            if (line.trimStart().startsWith("CPU part")) {
-                val v = line.substringAfter(":").trim()
-                if (v.isNotEmpty()) parts.add(v)
-            }
-        }
-        return parts.distinct()
-    }
-
-    private fun calculateSuggestedThreads(cores: Int, isBigLittle: Boolean): Int {
-        // Exynos 2200: 1x X2 + 3x A710 big cores → 4 threads avoids little-core bottleneck
-        if (isExynos()) return 4
-        if (isBigLittle) return (cores * 0.75f).toInt().coerceIn(2, 12)
-        return (cores * 0.85f).toInt().coerceIn(2, 16)
-    }
-
-    private fun isExynos(): Boolean {
-        val hw = Build.HARDWARE.lowercase()
-        if (hw.contains("exynos") || hw.startsWith("s5e")) return true
-        val board = Build.BOARD.lowercase()
-        return board.contains("exynos") || board.startsWith("s5e")
-    }
-
-    private fun calculateSuggestedGpuLayers(): Int {
-        // Exynos GPUs (Xclipse / RDNA 2) have poor Vulkan support with llama.cpp
-        if (isExynos()) return 0
-        val mem = vramBytes() shr 30
+    /**
+     * Get suggested engine type based on device GPU.
+     */
+    fun suggestEngine(deviceInfo: DeviceInfo): InferenceEngine.EngineType {
         return when {
-            mem >= 8 -> 99
-            mem >= 4 -> 33
-            mem >= 2 -> 16
-            else -> 0
+            deviceInfo.isSnapdragon -> InferenceEngine.EngineType.LLAMA_CPP  // OpenCL for Adreno
+            deviceInfo.isMediaTek -> InferenceEngine.EngineType.MNN         // MNN CPU is faster
+            deviceInfo.isExynos -> InferenceEngine.EngineType.LLAMA_CPP     // Vulkan for Xclipse
+            deviceInfo.isTensor -> InferenceEngine.EngineType.LLAMA_CPP     // Vulkan for Mali
+            else -> InferenceEngine.EngineType.MNN                          // MNN CPU fallback
         }
     }
-
-    private fun vulkanAvailable(): Boolean {
-        return try {
-            Class.forName("android.os.Build\$VERSION")
-            Build.VERSION.SDK_INT >= 29
-        } catch (_: Exception) { false }
-    }
-
-
 }

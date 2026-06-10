@@ -30,9 +30,15 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
-        android:theme="@style/Theme.GGUFZeroCopyV5"
+        android:theme="@style/Theme.GGUFZeroCopyV6"
         android:hardwareAccelerated="true"
         android:largeHeap="true">
+
+        <!-- OpenCL for Adreno GPU acceleration (Android 12+) -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false"/>
+
+        <!-- Vulkan support (optional) -->
+        <uses-native-library android:name="libvulkan.so" android:required="false"/>
 
         <activity
             android:name=".MainActivity"

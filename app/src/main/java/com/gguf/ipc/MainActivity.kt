@@ -6,10 +6,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.os.StatFs
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -18,14 +16,9 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -35,45 +28,45 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ── Design Tokens ──
-private val BgDeep       = Color(0xFF080C14)
-private val BgSurface    = Color(0xFF111827)
-private val BgCard       = Color(0xFF1A1F2E)
-private val BgInput      = Color(0xFF0F172A)
-private val BgThink      = Color(0xFF0F172A)
-private val UserBubble   = Color(0xFF1E3A5F)
-private val BotBubble    = Color(0xFF14291A)
-val AccentCyan           = Color(0xFF22D3EE)
-val AccentGreen          = Color(0xFF34D399)
-val AccentAmber          = Color(0xFFFBBF24)
-val AccentRed            = Color(0xFFF87171)
-val AccentPurple         = Color(0xFFA78BFA)
-private val TextPrimary  = Color(0xFFF0F4F8)
-private val TextSecond   = Color(0xFF94A3B8)
-private val TextMuted    = Color(0xFF475569)
-private val NavInactive  = Color(0xFF475569)
+// ─────────────────────────────────────────────────────────────────────────────
+// Design tokens
+// ─────────────────────────────────────────────────────────────────────────────
+private val BgDeep      = Color(0xFF080C14)
+private val BgSurface   = Color(0xFF0F172A)
+private val BgCard      = Color(0xFF111827)
+private val BgInput     = Color(0xFF1E293B)
+private val AccentCyan  = Color(0xFF22D3EE)
+private val AccentGreen = Color(0xFF34D399)
+private val AccentAmber = Color(0xFFFBBF24)
+private val AccentRed   = Color(0xFFF87171)
+private val AccentPurple= Color(0xFFA78BFA)
+private val TextPrimary = Color(0xFFF0F4F8)
+private val TextSecond  = Color(0xFF94A3B8)
+private val TextMuted   = Color(0xFF64748B)
+private val ThinkBg     = Color(0xFF0F172A)
+private val UserBubble  = Color(0xFF1E3A5F)
+private val BotBubble   = Color(0xFF14291A)
 
-// ── Data ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Data classes
+// ─────────────────────────────────────────────────────────────────────────────
+enum class Screen { CHAT, MODELS, SETTINGS, INFO, BENCH }
 enum class Role { USER, ASSISTANT }
-
 data class ChatMessage(
     val role: Role,
     val content: String,
@@ -82,27 +75,20 @@ data class ChatMessage(
     val tokenCount: Int = 0
 )
 
-private enum class Screen(val label: String, val icon: ImageVector, val filledIcon: ImageVector) {
-    CHAT("Chat", Icons.Outlined.Forum, Icons.Filled.Forum),
-    MODELS("Models", Icons.Outlined.Memory, Icons.Filled.Memory),
-    SETTINGS("Settings", Icons.Outlined.Tune, Icons.Filled.Tune),
-    INFO("Info", Icons.Outlined.Info, Icons.Filled.Info),
-    BENCH("Bench", Icons.Outlined.Speed, Icons.Filled.Speed)
-}
-
-// ── Activity ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity
+// ─────────────────────────────────────────────────────────────────────────────
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         EngineCore.bootZeroCopyEngine()
+        EngineManager.init(this)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
                     background   = BgDeep,
-                    surface      = BgSurface,
+                    surface      = BgCard,
                     primary      = AccentCyan,
-                    secondary    = AccentPurple,
-                    tertiary     = AccentGreen,
                     onBackground = TextPrimary,
                     onSurface    = TextPrimary
                 )
@@ -116,853 +102,493 @@ class MainActivity : ComponentActivity() {
 
     fun copyUriToFiles(uri: Uri, filename: String, onProgress: (String) -> Unit): String? = try {
         val cacheFile = File(filesDir, filename)
-        contentResolver.openInputStream(uri)?.use { input ->
-            onProgress("Copying model to internal storage\u2026")
+        contentResolver.openInputStream(uri)?.use { input: InputStream ->
+            onProgress("Copying model to internal storage...")
             cacheFile.outputStream().use { input.copyTo(it, bufferSize = 8 * 1024 * 1024) }
         }
         cacheFile.absolutePath
     } catch (e: Exception) { null }
 }
 
-// ── App Root ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Main App Root with Bottom Navigation
+// ─────────────────────────────────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppRoot() {
-    val ctx         = LocalContext.current
-    val activity    = ctx as MainActivity
-    val scope       = rememberCoroutineScope()
-    val listState   = rememberLazyListState()
-    val clipManager = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val chatManager = remember { ChatManager(ctx) }
-    val snackbar    = remember { SnackbarHostState() }
+fun AppRoot() {
+    val activity       = LocalContext.current as MainActivity
+    val coroutineScope = rememberCoroutineScope()
+    val listState      = rememberLazyListState()
+    val clipManager    = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
-    // ── State ──
-    var screen          by remember { mutableStateOf(Screen.CHAT) }
-    var engineStatus    by remember { mutableStateOf("No model loaded") }
-    var isLoading       by remember { mutableStateOf(false) }
-    var isInferring     by remember { mutableStateOf(false) }
-    var modelLoaded     by remember { mutableStateOf(false) }
-    var modelFilename   by remember { mutableStateOf("") }
-    var modelPath       by remember { mutableStateOf("") }
-    var modelInfo       by remember { mutableStateOf<JSONObject?>(null) }
-    var streamedText    by remember { mutableStateOf("") }
-    var promptInput     by remember { mutableStateOf("") }
-    var kvUsage         by remember { mutableStateOf(0) }
-    var tokensPerSec    by remember { mutableStateOf(0f) }
-    var inferStartMs    by remember { mutableStateOf(0L) }
-    var benchResult     by remember { mutableStateOf("") }
-    var isBenching      by remember { mutableStateOf(false) }
-    var showSessionMenu by remember { mutableStateOf(false) }
-    var renameDialogId  by remember { mutableStateOf<String?>(null) }
-    var renameText      by remember { mutableStateOf("") }
+    // Model state
+    var engineStatus  by remember { mutableStateOf("No model loaded") }
+    var isLoading     by remember { mutableStateOf(false) }
+    var isInferring   by remember { mutableStateOf(false) }
+    var modelLoaded   by remember { mutableStateOf(false) }
+    var modelFilename by remember { mutableStateOf("") }
+    var modelInfo     by remember { mutableStateOf<JSONObject?>(null) }
+    var streamedText  by remember { mutableStateOf("") }
+    var promptInput   by remember { mutableStateOf("") }
+    var kvUsage       by remember { mutableStateOf(0) }
+    var tokensPerSec  by remember { mutableStateOf(0f) }
+    var inferStartMs  by remember { mutableStateOf(0L) }
+    var totalTokens   by remember { mutableStateOf(0) }
 
-    // ── Settings state ──
-    var nCtxStr      by remember { mutableStateOf("2048") }
-    var maxTokStr    by remember { mutableStateOf("1024") }
-    var tempStr      by remember { mutableStateOf("0.7") }
-    var topPStr      by remember { mutableStateOf("0.9") }
-    var minPStr      by remember { mutableStateOf("0.05") }
-    var gpuLStr      by remember { mutableStateOf("99") }
-    var threadsStr   by remember { mutableStateOf("4") }
-    var repPenStr    by remember { mutableStateOf("1.1") }
-    var freqPenStr   by remember { mutableStateOf("0.0") }
-    var presPenStr   by remember { mutableStateOf("0.0") }
-    var sysPrompt    by remember { mutableStateOf("You are a helpful, concise assistant. Answer immediately and directly without thinking, reasoning, or chain-of-thought unless the user explicitly asks for step-by-step. Be brief and get to the point.") }
-    var deepThink    by remember { mutableStateOf(false) }
-
-    // CPU / device info
-    var cpuInfo  by remember { mutableStateOf<DeviceUtils.CpuInfo?>(null) }
-    var gpuInfo  by remember { mutableStateOf<DeviceUtils.GpuInfo?>(null) }
-
+    // Chat & sessions
     val chatHistory = remember { mutableStateListOf<ChatMessage>() }
+    var sessions by remember { mutableStateOf(ChatManager.getSessions()) }
+    var currentSessionId by remember { mutableStateOf<String?>(null) }
 
-    // ── Apply config to native ──
-    fun applyConfig() {
-        EngineCore.setEngineConfig(EngineCore.Config(
+    // Navigation
+    var selectedScreen by remember { mutableStateOf(Screen.CHAT) }
+
+    // Settings (persisted)
+    var nCtxStr        by remember { mutableStateOf(SettingsManager.nCtx.toString()) }
+    var maxTokensStr   by remember { mutableStateOf(SettingsManager.maxTokens.toString()) }
+    var tempStr        by remember { mutableStateOf(SettingsManager.temperature.toString()) }
+    var topPStr        by remember { mutableStateOf(SettingsManager.topP.toString()) }
+    var minPStr        by remember { mutableStateOf(SettingsManager.minP.toString()) }
+    var gpuLayersStr   by remember { mutableStateOf(SettingsManager.gpuLayers.toString()) }
+    var nThreadsStr    by remember { mutableStateOf(SettingsManager.threads.toString()) }
+    var repeatPenStr   by remember { mutableStateOf(SettingsManager.repeatPenalty.toString()) }
+    var freqPenStr     by remember { mutableStateOf(SettingsManager.freqPenalty.toString()) }
+    var presPenStr     by remember { mutableStateOf(SettingsManager.presPenalty.toString()) }
+    var systemPrompt   by remember { mutableStateOf(SettingsManager.systemPrompt) }
+
+    // Benchmark
+    var benchResult    by remember { mutableStateOf("") }
+    var isBenching     by remember { mutableStateOf(false) }
+
+    // Get current engine
+    val currentEngine = remember(modelLoaded) {
+        if (modelLoaded) EngineManager.getCurrentEngine() else null
+    }
+
+    fun applySettings() {
+        val cfg = InferenceEngine.Config(
             nCtx         = nCtxStr.toIntOrNull()?.coerceIn(512, 32768) ?: 8192,
-            maxNewTokens = maxTokStr.toIntOrNull()?.coerceIn(64, 8192) ?: 4096,
+            maxNewTokens = maxTokensStr.toIntOrNull()?.coerceIn(64, 8192) ?: 4096,
             temperature  = tempStr.toFloatOrNull()?.coerceIn(0f, 2f) ?: 0.7f,
             topP         = topPStr.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.9f,
             minP         = minPStr.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.05f,
-            nGpuLayers   = gpuLStr.toIntOrNull()?.coerceIn(0, 999) ?: 99,
-            nThreads     = threadsStr.toIntOrNull()?.coerceIn(1, 16) ?: 4,
+            nGpuLayers   = gpuLayersStr.toIntOrNull()?.coerceIn(0, 999) ?: 99,
+            nThreads     = nThreadsStr.toIntOrNull()?.coerceIn(1, 16) ?: 4,
             seed         = -1
+        )
+        currentEngine?.setConfig(cfg)
+        currentEngine?.setSystemPrompt(systemPrompt)
+        currentEngine?.setRepeatPenalty(InferenceEngine.RepeatPenaltyConfig(
+            repeatPenStr.toFloatOrNull() ?: 1.1f,
+            freqPenStr.toFloatOrNull()   ?: 0.0f,
+            presPenStr.toFloatOrNull()   ?: 0.0f
         ))
-        EngineCore.setSystemPromptNative(sysPrompt)
-        EngineCore.setRepeatPenalty(EngineCore.RepeatPenaltyConfig(
-            repeatPenalty = repPenStr.toFloatOrNull() ?: 1.1f,
-            freqPenalty   = freqPenStr.toFloatOrNull() ?: 0.0f,
-            presPenalty   = presPenStr.toFloatOrNull() ?: 0.0f
-        ))
+        // Persist
+        SettingsManager.nCtx = cfg.nCtx
+        SettingsManager.maxTokens = cfg.maxNewTokens
+        SettingsManager.temperature = cfg.temperature
+        SettingsManager.topP = cfg.topP
+        SettingsManager.minP = cfg.minP
+        SettingsManager.gpuLayers = cfg.nGpuLayers
+        SettingsManager.threads = cfg.nThreads
+        SettingsManager.repeatPenalty = repeatPenStr.toFloatOrNull() ?: 1.1f
+        SettingsManager.freqPenalty = freqPenStr.toFloatOrNull() ?: 0.0f
+        SettingsManager.presPenalty = presPenStr.toFloatOrNull() ?: 0.0f
+        SettingsManager.systemPrompt = systemPrompt
     }
 
-    // ── Auto-detect CPU and apply ──
-    fun autoDetectAndApply() {
-        val cpu = DeviceUtils.detectCpu()
-        val gpu = DeviceUtils.detectGpu()
-        cpuInfo = cpu
-        gpuInfo = gpu
-        threadsStr = cpu.suggestedThreads.toString()
-        gpuLStr = cpu.suggestedGpuLayers.toString()
-        applyConfig()
-        engineStatus = "Auto-configured: ${cpu.cores}c ${cpu.architecture} ${cpu.suggestedGpuLayers}GL"
-    }
-
-    // Load chat messages when session changes
-    fun loadChatSession() {
-        chatHistory.clear()
-        val msgs = chatManager.loadMessagesForCurrent()
-        chatHistory.addAll(msgs)
-    }
-
-    // Init: auto-detect device, load first session
-    LaunchedEffect(Unit) {
-        autoDetectAndApply()
-        loadChatSession()
-    }
-
-    // ── Inference polling ──
+    // Stream polling
     LaunchedEffect(isInferring) {
         if (isInferring) {
             inferStartMs = System.currentTimeMillis()
             while (isInferring) {
                 delay(80)
-                val partial = EngineCore.readPartialStream()
-                if (partial.isNotEmpty()) streamedText += partial
+                val engine = EngineManager.getCurrentEngine() ?: break
+                val partial = engine.readPartialStream()
+                if (partial.isNotEmpty()) streamedText = partial
                 val elapsed = (System.currentTimeMillis() - inferStartMs) / 1000f
-                val toks    = EngineCore.getTokensGenerated()
-                if (elapsed > 0f) tokensPerSec = toks / elapsed
-                kvUsage = EngineCore.getKvCacheUsageNative()
-                if (EngineCore.isInferenceDone()) {
-                    delay(30)
-                    val finalText = EngineCore.readTokenStream()
-                    val finalToks = EngineCore.getTokensGenerated()
-                    val finalTps  = if (elapsed > 0f) finalToks / elapsed else 0f
-                    EngineCore.addTotalTokens(finalToks)
+                val toks = engine.getTokensGenerated()
+                if (elapsed > 0) tokensPerSec = toks / elapsed
+                kvUsage = engine.getKvCacheUsage()
+
+                if (engine.isInferenceDone()) {
+                    delay(20)
+                    val finalText = engine.readTokenStream()
+                    val finalToks = engine.getTokensGenerated()
+                    val finalTps = if (elapsed > 0) finalToks / elapsed else 0f
+                    totalTokens += finalToks
                     if (finalText.isNotEmpty()) {
-                        val msg = ChatMessage(Role.ASSISTANT, finalText,
-                            tokensPerSec = finalTps, tokenCount = finalToks)
-                        chatHistory.add(msg)
-                        chatManager.addMessage(msg)
-                        val session = chatManager.currentSession
-                        if (session != null && session.name == "New Chat") {
-                            chatManager.renameSession(session.id, session.autoName())
+                        chatHistory.add(ChatMessage(Role.ASSISTANT, finalText, tokensPerSec = finalTps, tokenCount = finalToks))
+                        currentSessionId?.let { sid ->
+                            ChatManager.addMessage(sid, ChatManager.Message("assistant", finalText, tokensPerSec = finalTps, tokenCount = finalToks))
                         }
                     }
                     streamedText = ""
-                    isInferring  = false
+                    isInferring = false
                 }
             }
         }
     }
 
-    // Auto-scroll
     LaunchedEffect(chatHistory.size, isInferring) {
-        if (chatHistory.isNotEmpty() && !isInferring)
+        if (chatHistory.isNotEmpty())
             listState.animateScrollToItem(chatHistory.size - 1)
     }
 
-    // ── File picker (model) ──
-    val modelPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             result.data?.data?.let { uri ->
-                val name = uri.lastPathSegment?.substringAfterLast('/')
-                    ?.substringAfterLast(':') ?: "model.gguf"
+                val filename = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "model.gguf"
                 isLoading = true; modelLoaded = false; streamedText = ""
-                engineStatus = "Preparing\u2026"
-                scope.launch(Dispatchers.IO) {
-                    val cached = activity.copyUriToFiles(uri, name) { msg ->
-                        scope.launch(Dispatchers.Main) { engineStatus = msg }
+                engineStatus = "Preparing model..."
+                coroutineScope.launch(Dispatchers.IO) {
+                    val cachedPath = activity.copyUriToFiles(uri, filename) { msg ->
+                        coroutineScope.launch(Dispatchers.Main) { engineStatus = msg }
                     }
-                    if (cached == null) {
-                        withContext(Dispatchers.Main) {
-                            engineStatus = "Failed to copy model file"
-                            isLoading = false
-                            scope.launch { snackbar.showSnackbar("Failed to copy model file") }
-                        }
+                    if (cachedPath == null) {
+                        withContext(Dispatchers.Main) { engineStatus = "Error: Could not read model file."; isLoading = false }
                         return@launch
                     }
-                    withContext(Dispatchers.Main) { engineStatus = "Loading into GGML\u2026" }
-                    applyConfig()
-                    val ok = EngineCore.loadModel(cached)
-                    if (ok) {
-                        modelInfo = try { JSONObject(EngineCore.getModelInfoNative()) }
-                            catch (_: Exception) { null }
+                    withContext(Dispatchers.Main) { engineStatus = "Loading model..." }
+
+                    // Get engine for format
+                    val engine = EngineManager.getEngineForFormat(cachedPath)
+                    engine.setConfig(SettingsManager.toConfig())
+                    engine.setRepeatPenalty(SettingsManager.toRepeatPenaltyConfig())
+                    engine.setSystemPrompt(SettingsManager.systemPrompt)
+
+                    val success = engine.loadModel(cachedPath)
+                    if (success) {
+                        modelInfo = engine.getModelInfo()
                     }
                     withContext(Dispatchers.Main) {
-                        isLoading = false
-                        modelLoaded = ok
-                        modelFilename = name
-                        if (ok) modelPath = cached else modelPath = ""
-                        engineStatus = if (ok) "\u2713 $name" else "\u2717 Load failed (OOM?)"
-                        if (ok) {
-                            screen = Screen.CHAT
-                            scope.launch { snackbar.showSnackbar("Model loaded: $name") }
-                        } else {
-                            scope.launch { snackbar.showSnackbar("Load failed \u2014 not enough memory?") }
-                        }
+                        isLoading = false; modelLoaded = success; modelFilename = filename
+                        engineStatus = if (success) "${engine.engineName}: $filename" else "Load failed (OOM?)"
+                        if (success) selectedScreen = Screen.CHAT
                     }
                 }
             }
         }
     }
 
-    // ── File picker (import presets) ──
-    val presetPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                try {
-                    val text = activity.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-                    if (text != null) {
-                        val json = JSONObject(text)
-                        nCtxStr = json.optString("n_ctx", nCtxStr)
-                        maxTokStr = json.optString("max_new_tokens", maxTokStr)
-                        tempStr = json.optString("temperature", tempStr)
-                        topPStr = json.optString("top_p", topPStr)
-                        minPStr = json.optString("min_p", minPStr)
-                        gpuLStr = json.optString("n_gpu_layers", gpuLStr)
-                        threadsStr = json.optString("n_threads", threadsStr)
-                        repPenStr = json.optString("repeat_penalty", repPenStr)
-                        freqPenStr = json.optString("freq_penalty", freqPenStr)
-                        presPenStr = json.optString("pres_penalty", presPenStr)
-                        json.optString("system_prompt", "").takeIf { it.isNotEmpty() }?.let { sysPrompt = it }
-                        applyConfig()
-                        engineStatus = "Preset loaded \u2713"
-                        scope.launch { snackbar.showSnackbar("Preset imported successfully") }
-                    }
-                } catch (e: Exception) {
-                    engineStatus = "\u2717 Failed to load preset"
-                    scope.launch { snackbar.showSnackbar("Failed to load preset") }
+    Column(modifier = Modifier.fillMaxSize().background(BgDeep)) {
+        // ── Top Bar ──
+        TopBar(
+            engineStatus = engineStatus,
+            modelLoaded = modelLoaded,
+            isInferring = isInferring,
+            kvUsage = kvUsage,
+            tokensPerSec = tokensPerSec,
+            onLoadClick = {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/octet-stream", "*/*"))
                 }
-            }
-        }
-    }
-
-    // ── Rename dialog ──
-    if (renameDialogId != null) {
-        AlertDialog(
-            onDismissRequest = { renameDialogId = null },
-            containerColor = BgCard,
-            titleContentColor = AccentCyan,
-            textContentColor = TextPrimary,
-            title = { Text("Rename Chat", fontWeight = FontWeight.Bold) },
-            text = {
-                OutlinedTextField(
-                    value = renameText, onValueChange = { renameText = it },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AccentCyan,
-                        unfocusedBorderColor = Color(0xFF334155),
-                        focusedTextColor = TextPrimary,
-                        cursorColor = AccentCyan
-                    )
-                )
+                filePicker.launch(intent)
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    chatManager.renameSession(renameDialogId!!, renameText)
-                    renameDialogId = null
-                }) { Text("Rename", color = AccentCyan, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { renameDialogId = null }) { Text("Cancel") }
-            }
+            isLoading = isLoading
         )
-    }
 
-    // ── Session switcher modal ──
-    if (showSessionMenu) {
-        AlertDialog(
-            onDismissRequest = { showSessionMenu = false },
-            containerColor = BgCard,
-            titleContentColor = AccentCyan,
-            title = { Text("Chat Sessions", fontWeight = FontWeight.Bold) },
-            text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
-                    items(chatManager.allSessions) { session ->
-                        val isCurrent = session.id == chatManager.currentSessionId
-                        Surface(
-                            modifier = Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable {
-                                    if (!isCurrent) {
-                                        chatManager.switchTo(session.id)
-                                        loadChatSession()
-                                    }
-                                    showSessionMenu = false
-                                },
-                            color = if (isCurrent) AccentCyan.copy(alpha = 0.1f) else Color.Transparent,
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isCurrent) AccentCyan.copy(alpha = 0.15f) else BgInput
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Forum,
-                                        contentDescription = null,
-                                        tint = if (isCurrent) AccentCyan else TextMuted,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(session.name, fontSize = 14.sp, color = TextPrimary,
-                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Row {
-                                        Text("${session.messages.size} msgs",
-                                            fontSize = 11.sp, color = TextMuted)
-                                        if (isCurrent) {
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("current", fontSize = 11.sp, color = AccentCyan,
-                                                fontFamily = FontFamily.Monospace)
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = {
-                                    renameText = session.name
-                                    renameDialogId = session.id
-                                    showSessionMenu = false
-                                }) {
-                                    Icon(Icons.Outlined.Edit, "Rename", tint = TextMuted,
-                                        modifier = Modifier.size(18.dp))
-                                }
-                                IconButton(onClick = {
-                                    chatManager.deleteSession(session.id)
-                                    loadChatSession()
-                                }) {
-                                    Icon(Icons.Outlined.Delete, "Delete", tint = AccentRed,
-                                        modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                    }
-                    item {
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                chatManager.createSession()
-                                loadChatSession()
-                                showSessionMenu = false
-                            },
-                            modifier = Modifier.fillMaxWidth().height(44.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
-                        ) { Text("+ New Session", color = Color.Black, fontWeight = FontWeight.Bold) }
-                    }
-                }
-            },
-            confirmButton = {}
-        )
-    }
-
-    // ── Layout ──
-    Scaffold(
-        containerColor = BgDeep,
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            AppTopBar(
-                engineStatus = engineStatus,
-                modelLoaded  = modelLoaded,
-                isInferring  = isInferring,
-                kvUsage      = kvUsage,
-                tokensPerSec = tokensPerSec,
-                isLoading    = isLoading,
-                sessionName  = chatManager.currentSession?.name ?: "Chat",
-                onLoadModel = {
-                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "*/*"
-                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/octet-stream", "*/*"))
-                    }
-                    modelPicker.launch(intent)
-                },
-                onSessions  = { showSessionMenu = true },
-                onSettings  = { screen = Screen.SETTINGS }
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = BgSurface.copy(alpha = 0.95f),
-                contentColor   = AccentCyan,
-                tonalElevation = 0.dp
-            ) {
-                Screen.entries.forEach { s ->
-                    NavigationBarItem(
-                        selected = screen == s,
-                        onClick  = { screen = s },
-                        icon     = {
-                            Icon(
-                                if (screen == s) s.filledIcon else s.icon,
-                                contentDescription = s.label,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        },
-                        label    = { Text(s.label, fontSize = 11.sp, fontWeight = if (screen == s) FontWeight.Bold else FontWeight.Normal) },
-                        colors   = NavigationBarItemDefaults.colors(
-                            selectedIconColor = AccentCyan,
-                            selectedTextColor = AccentCyan,
-                            unselectedIconColor = NavInactive,
-                            unselectedTextColor = NavInactive,
-                            indicatorColor     = AccentCyan.copy(alpha = 0.12f)
-                        )
-                    )
-                }
-            }
-        }
-    ) { pad ->
-        Box(modifier = Modifier.fillMaxSize().padding(pad)) {
-            when (screen) {
+        // ── Content ──
+        Box(modifier = Modifier.weight(1f)) {
+            when (selectedScreen) {
                 Screen.CHAT -> ChatScreen(
-                    chatHistory  = chatHistory,
-                    listState    = listState,
+                    chatHistory = chatHistory,
+                    listState = listState,
                     streamedText = streamedText,
-                    isInferring  = isInferring,
-                    isLoading    = isLoading,
-                    modelLoaded  = modelLoaded,
-                    deepThink    = deepThink,
-                    onDeepThinkChange = { deepThink = it },
-                    promptInput  = promptInput,
-                    sessionName  = chatManager.currentSession?.name ?: "Chat",
-                    sessionCount = chatManager.allSessions.size,
+                    isInferring = isInferring,
+                    isLoading = isLoading,
+                    modelLoaded = modelLoaded,
+                    promptInput = promptInput,
                     onPromptChange = { promptInput = it },
-                    onSend = {
+                    onRun = {
                         if (!isInferring && promptInput.isNotBlank()) {
-                            val userMsg = ChatMessage(Role.USER, promptInput)
-                            chatHistory.add(userMsg)
-                            chatManager.addMessage(userMsg)
-                            val msg = if (deepThink) {
-                                promptInput + "\n\nThink step by step before answering. Show your reasoning in <think> tags, then give the final answer."
-                            } else {
-                                promptInput
+                            val userMsg = promptInput
+                            chatHistory.add(ChatMessage(Role.USER, userMsg))
+                            currentSessionId?.let { sid ->
+                                ChatManager.addMessage(sid, ChatManager.Message("user", userMsg))
                             }
-                            promptInput = ""
-                            streamedText = ""
-                            isInferring = true
-                            scope.launch(Dispatchers.IO) {
-                                EngineCore.executeZeroCopyInference(msg)
+                            promptInput = ""; streamedText = ""; isInferring = true
+                            coroutineScope.launch(Dispatchers.IO) {
+                                EngineManager.getCurrentEngine()?.executeInference(userMsg)
                             }
                         }
                     },
-                    onAbort = { EngineCore.abortInferenceNative() },
+                    onAbort = { EngineManager.getCurrentEngine()?.abortInference() },
                     onReset = {
-                        EngineCore.resetContextNative()
-                        chatManager.clearCurrentSession()
-                        chatHistory.clear()
-                        streamedText = ""
-                        engineStatus = "Context reset \u2713"
-                        scope.launch { snackbar.showSnackbar("Chat reset") }
+                        EngineManager.getCurrentEngine()?.resetContext()
+                        chatHistory.clear(); streamedText = ""
+                        engineStatus = "Context reset"
                     },
                     onCopyChat = {
-                        val sb = StringBuilder()
-                        chatHistory.forEach { m ->
-                            val tag = if (m.role == Role.USER) "User" else "Assistant"
-                            sb.append("[$tag] ${m.content}\n\n")
-                        }
-                        clipManager.setPrimaryClip(ClipData.newPlainText("Chat", sb.toString()))
-                        scope.launch { snackbar.showSnackbar("Chat copied to clipboard") }
-                    },
-                    onNewSession = {
-                        chatManager.createSession()
-                        loadChatSession()
-                    },
-                    onSwitchSession = { idx ->
-                        chatManager.switchToIndex(idx)
-                        loadChatSession()
+                        val text = currentSessionId?.let { ChatManager.exportSession(it) } ?: ""
+                        clipManager.setPrimaryClip(ClipData.newPlainText("Chat", text))
                     },
                     clipManager = clipManager
                 )
-
                 Screen.MODELS -> ModelsScreen(
-                    modelLoaded  = modelLoaded,
+                    modelLoaded = modelLoaded,
                     modelFilename = modelFilename,
-                    modelInfo    = modelInfo,
-                    engineStatus = engineStatus,
-                    cpuInfo      = cpuInfo,
-                    gpuInfo      = gpuInfo,
-                    onLoadModel  = {
-                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/octet-stream", "*/*"))
-                        }
-                        modelPicker.launch(intent)
-                    },
-                    onAutoDetect = { autoDetectAndApply() }
+                    modelInfo = modelInfo,
+                    totalTokens = totalTokens,
+                    onUnload = {
+                        EngineManager.getCurrentEngine()?.unloadModel()
+                        modelLoaded = false; modelFilename = ""; modelInfo = null
+                        engineStatus = "Model unloaded"
+                    }
                 )
-
                 Screen.SETTINGS -> SettingsScreen(
-                    nCtxStr = nCtxStr, onNCtxChange = { nCtxStr = it },
-                    maxTokStr = maxTokStr, onMaxTokChange = { maxTokStr = it },
-                    tempStr = tempStr, onTempChange = { tempStr = it },
-                    topPStr = topPStr, onTopPChange = { topPStr = it },
-                    minPStr = minPStr, onMinPChange = { minPStr = it },
-                    gpuLStr = gpuLStr, onGpuLChange = { gpuLStr = it },
-                    threadsStr = threadsStr, onThreadsChange = { threadsStr = it },
-                    repPenStr = repPenStr, onRepPenChange = { repPenStr = it },
-                    freqPenStr = freqPenStr, onFreqPenChange = { freqPenStr = it },
-                    presPenStr = presPenStr, onPresPenChange = { presPenStr = it },
-                    sysPrompt = sysPrompt, onSysPromptChange = { sysPrompt = it },
-                    deepThink = deepThink, onDeepThinkChange = { deepThink = it },
-                    cpuInfo = cpuInfo, gpuInfo = gpuInfo,
-                    onAutoDetect = { autoDetectAndApply() },
-                    onImportPreset = {
-                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "*/*"))
-                        }
-                        presetPicker.launch(intent)
-                    },
+                    nCtxStr, { nCtxStr = it },
+                    maxTokensStr, { maxTokensStr = it },
+                    tempStr, { tempStr = it },
+                    topPStr, { topPStr = it },
+                    minPStr, { minPStr = it },
+                    gpuLayersStr, { gpuLayersStr = it },
+                    nThreadsStr, { nThreadsStr = it },
+                    repeatPenStr, { repeatPenStr = it },
+                    freqPenStr, { freqPenStr = it },
+                    presPenStr, { presPenStr = it },
+                    systemPrompt, { systemPrompt = it },
                     onApply = {
-                        applyConfig()
-                        if (modelLoaded && modelPath.isNotEmpty()) {
-                            scope.launch(Dispatchers.IO) {
-                                withContext(Dispatchers.Main) {
-                                    engineStatus = "Reloading model\u2026"
-                                    isLoading = true
-                                }
-                                val ok = EngineCore.loadModel(modelPath)
-                                if (ok) {
-                                    modelInfo = try { JSONObject(EngineCore.getModelInfoNative()) }
-                                        catch (_: Exception) { null }
-                                }
-                                withContext(Dispatchers.Main) {
-                                    isLoading = false
-                                    modelLoaded = ok
-                                    engineStatus = if (ok) "\u2713 Settings applied, $modelFilename"
-                                        else "\u2717 Reload failed"
-                                    scope.launch {
-                                        if (ok) snackbar.showSnackbar("Settings applied, model reloaded")
-                                        else snackbar.showSnackbar("Model reload failed")
-                                    }
-                                }
-                            }
-                        } else {
-                            engineStatus = "Settings saved (load model first)"
-                            scope.launch { snackbar.showSnackbar("Settings saved \u2014 load a model to apply") }
+                        applySettings()
+                        engineStatus = if (modelLoaded) "Settings applied" else "Settings saved"
+                    },
+                    onAutoDetect = {
+                        val deviceInfo = EngineManager.getDeviceInfo()
+                        if (deviceInfo != null) {
+                            SettingsManager.applyToDeviceDefaults(deviceInfo)
+                            nCtxStr = SettingsManager.nCtx.toString()
+                            gpuLayersStr = SettingsManager.gpuLayers.toString()
+                            nThreadsStr = SettingsManager.threads.toString()
+                            engineStatus = "Auto-detected: ${deviceInfo.socModel}"
                         }
                     }
                 )
-
-                Screen.INFO -> InfoScreen(
-                    modelLoaded  = modelLoaded,
-                    modelInfo    = modelInfo,
-                    modelFilename = modelFilename,
-                    totalTokens  = EngineCore.totalTokens(),
-                    cpuInfo      = cpuInfo,
-                    gpuInfo      = gpuInfo
-                )
-
+                Screen.INFO -> InfoScreen(modelInfo, modelFilename, totalTokens, modelLoaded)
                 Screen.BENCH -> BenchScreen(
                     modelLoaded = modelLoaded,
                     benchResult = benchResult,
-                    isBenching  = isBenching,
-                    onRunBench  = {
-                        if (!isInferring && modelLoaded) {
+                    isBenching = isBenching,
+                    onRunBench = {
+                        if (!isInferring) {
                             isBenching = true
-                            scope.launch(Dispatchers.IO) {
-                                val raw = EngineCore.benchmarkNative(512, 128)
+                            coroutineScope.launch(Dispatchers.IO) {
+                                val raw = EngineManager.getCurrentEngine()?.benchmark(512, 128)
                                 withContext(Dispatchers.Main) {
-                                    benchResult = raw
-                                    isBenching = false
-                                    scope.launch { snackbar.showSnackbar("Benchmark complete") }
+                                    benchResult = raw?.toString() ?: "{}"; isBenching = false
                                 }
                             }
                         }
                     }
                 )
             }
+        }
+
+        // ── Bottom Navigation ──
+        NavigationBar(
+            containerColor = BgCard,
+            contentColor = AccentCyan
+        ) {
+            NavigationBarItem(
+                icon = { Icon(Icons.Filled.Chat, contentDescription = null) },
+                label = { Text("Chat", fontSize = 11.sp) },
+                selected = selectedScreen == Screen.CHAT,
+                onClick = { selectedScreen = Screen.CHAT },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentCyan,
+                    selectedTextColor = AccentCyan,
+                    unselectedIconColor = TextMuted,
+                    unselectedTextColor = TextMuted,
+                    indicatorColor = BgInput
+                )
+            )
+            NavigationBarItem(
+                icon = { Icon(Icons.Filled.SmartToy, contentDescription = null) },
+                label = { Text("Models", fontSize = 11.sp) },
+                selected = selectedScreen == Screen.MODELS,
+                onClick = { selectedScreen = Screen.MODELS },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentCyan,
+                    selectedTextColor = AccentCyan,
+                    unselectedIconColor = TextMuted,
+                    unselectedTextColor = TextMuted,
+                    indicatorColor = BgInput
+                )
+            )
+            NavigationBarItem(
+                icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                label = { Text("Settings", fontSize = 11.sp) },
+                selected = selectedScreen == Screen.SETTINGS,
+                onClick = { selectedScreen = Screen.SETTINGS },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentCyan,
+                    selectedTextColor = AccentCyan,
+                    unselectedIconColor = TextMuted,
+                    unselectedTextColor = TextMuted,
+                    indicatorColor = BgInput
+                )
+            )
+            NavigationBarItem(
+                icon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                label = { Text("Info", fontSize = 11.sp) },
+                selected = selectedScreen == Screen.INFO,
+                onClick = { selectedScreen = Screen.INFO },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentCyan,
+                    selectedTextColor = AccentCyan,
+                    unselectedIconColor = TextMuted,
+                    unselectedTextColor = TextMuted,
+                    indicatorColor = BgInput
+                )
+            )
+            NavigationBarItem(
+                icon = { Icon(Icons.Filled.Speed, contentDescription = null) },
+                label = { Text("Bench", fontSize = 11.sp) },
+                selected = selectedScreen == Screen.BENCH,
+                onClick = { selectedScreen = Screen.BENCH },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentCyan,
+                    selectedTextColor = AccentCyan,
+                    unselectedIconColor = TextMuted,
+                    unselectedTextColor = TextMuted,
+                    indicatorColor = BgInput
+                )
+            )
         }
     }
 }
 
-// ── Top Bar ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Top Bar
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun AppTopBar(
+fun TopBar(
     engineStatus: String, modelLoaded: Boolean, isInferring: Boolean,
-    kvUsage: Int, tokensPerSec: Float, isLoading: Boolean,
-    sessionName: String,
-    onLoadModel: () -> Unit, onSessions: () -> Unit, onSettings: () -> Unit
+    kvUsage: Int, tokensPerSec: Float, onLoadClick: () -> Unit, isLoading: Boolean
 ) {
-    Surface(color = BgSurface, shadowElevation = 2.dp) {
+    Surface(color = BgCard, shadowElevation = 4.dp) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Hub,
-                    contentDescription = null,
-                    tint = AccentCyan,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("GGUF",
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                            color = AccentCyan, fontSize = 16.sp)
-                        Text(" ZC v6",
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Light,
-                            color = AccentCyan.copy(alpha = 0.6f), fontSize = 16.sp)
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(AccentCyan.copy(alpha = 0.12f))
-                                .clickable { onSessions() }
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Forum, null,
-                                    tint = AccentCyan, modifier = Modifier.size(10.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(sessionName,
-                                    color = AccentCyan, fontSize = 9.sp,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 100.dp))
-                            }
-                        }
-                    }
+                    Text("GGUF ZeroCopy",
+                        fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                        color = AccentCyan, fontSize = 16.sp)
                     Text(engineStatus,
                         color = if (modelLoaded) AccentGreen else TextSecond,
                         fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(top = 1.dp))
+                        modifier = Modifier.padding(top = 2.dp))
                 }
-                if (modelLoaded) {
+                Button(
+                    onClick = onLoadClick,
+                    enabled = !isLoading && !isInferring,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (modelLoaded) Color(0xFF1E3A5F) else AccentCyan)
+                ) {
+                    Text(
+                        when { isLoading -> "Loading..."; modelLoaded -> "Swap Model"; else -> "Load Model" },
+                        color = if (modelLoaded) AccentCyan else Color.Black,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+            if (modelLoaded) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     StatChip("KV", "$kvUsage%", if (kvUsage > 80) AccentRed else AccentGreen)
-                    Spacer(Modifier.width(6.dp))
                     if (isInferring)
                         StatChip("TPS", "${"%.1f".format(tokensPerSec)}", AccentAmber)
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onLoadModel,
-                    enabled = !isLoading && !isInferring,
-                    modifier = Modifier.height(34.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors  = ButtonDefaults.buttonColors(
-                        containerColor = if (modelLoaded) BgCard else AccentCyan)
-                ) {
-                    Text(
-                        when { isLoading -> "Loading\u2026"
-                            modelLoaded -> "\u21C4 Swap Model"
-                            else -> "\uD83D\uDCC2 Load GGUF" },
-                        color = if (modelLoaded) AccentCyan else Color.Black,
-                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold
-                    )
-                }
-                if (isInferring) {
-                    Button(
-                        onClick = { EngineCore.abortInferenceNative() },
-                        modifier = Modifier.height(34.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors   = ButtonDefaults.buttonColors(containerColor = AccentRed)
-                    ) { Text("\u25A0 Stop", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White) }
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onSettings, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.Settings, "Settings", tint = TextSecond, modifier = Modifier.size(20.dp))
-                }
-            }
         }
     }
 }
 
 @Composable
-private fun StatChip(label: String, value: String, color: Color) {
+fun StatChip(label: String, value: String, color: Color) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .background(BgInput)
-            .padding(horizontal = 7.dp, vertical = 2.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 9.sp, color = TextSecond, fontFamily = FontFamily.Monospace)
-        Spacer(Modifier.width(3.dp))
-        Text(value, fontSize = 9.sp, color = color, fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold)
+        Text(label, fontSize = 10.sp, color = TextSecond, fontFamily = FontFamily.Monospace)
+        Spacer(Modifier.width(4.dp))
+        Text(value, fontSize = 10.sp, color = color, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
     }
 }
 
-// ── Chat Screen ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Screen
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun ChatScreen(
-    chatHistory: List<ChatMessage>, listState: LazyListState,
-    streamedText: String, isInferring: Boolean, isLoading: Boolean,
-    modelLoaded: Boolean, promptInput: String,
-    sessionName: String, sessionCount: Int,
-    deepThink: Boolean, onDeepThinkChange: (Boolean) -> Unit,
-    onPromptChange: (String) -> Unit, onSend: () -> Unit,
-    onAbort: () -> Unit, onReset: () -> Unit, onCopyChat: () -> Unit,
-    onNewSession: () -> Unit, onSwitchSession: (Int) -> Unit,
-    clipManager: ClipboardManager
+fun ChatScreen(
+    chatHistory: List<ChatMessage>, listState: LazyListState, streamedText: String,
+    isInferring: Boolean, isLoading: Boolean, modelLoaded: Boolean,
+    promptInput: String, onPromptChange: (String) -> Unit,
+    onRun: () -> Unit, onAbort: () -> Unit, onReset: () -> Unit,
+    onCopyChat: () -> Unit, clipManager: ClipboardManager
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        // Messages
         LazyColumn(
-            state    = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            state = listState,
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 12.dp)
         ) {
-            if (chatHistory.isEmpty() && !modelLoaded && !isLoading) {
-                item { WelcomeCard() }
+            if (chatHistory.isEmpty() && !modelLoaded) {
+                item { EmptyState() }
             }
-
-            items(chatHistory, key = { "${it.role}_${it.timestamp}" }) { msg ->
-                MessageBubble(msg) { content ->
+            items(chatHistory) { msg ->
+                MessageBubble(msg = msg, onCopy = { content ->
                     clipManager.setPrimaryClip(ClipData.newPlainText("Message", content))
-                }
+                })
             }
-
             if (isInferring && streamedText.isNotEmpty()) {
-                item(key = "streaming") {
-                    Column {
-                        if (deepThink) {
-                            Row(
-                                modifier = Modifier.padding(start = 48.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(AccentAmber)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("\uD83E\uDDD0 Thinking\u2026",
-                                    fontSize = 10.sp, color = AccentAmber,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                        StreamingBubble(streamedText)
-                    }
-                }
+                item { StreamingBubble(streamText = streamedText) }
             }
-
             if (isLoading) {
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = AccentCyan, strokeWidth = 2.dp
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text("Loading model\u2026", color = TextSecond, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(12.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = AccentCyan, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Loading model...", color = TextSecond, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                     }
                 }
             }
         }
-
         // Input bar
-        Surface(color = BgSurface, shadowElevation = 8.dp) {
+        Surface(color = BgCard, shadowElevation = 8.dp) {
             Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                 OutlinedTextField(
-                    value = promptInput,
-                    onValueChange = onPromptChange,
+                    value = promptInput, onValueChange = onPromptChange,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text(
-                            if (modelLoaded) "Type a message\u2026" else "Load a model first",
-                            color = TextMuted, fontSize = 13.sp
-                        )
-                    },
+                    placeholder = { Text(if (modelLoaded) "Type a message..." else "Load a model first", color = TextSecond, fontSize = 13.sp) },
                     enabled = modelLoaded && !isLoading,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor   = AccentCyan,
-                        unfocusedBorderColor = Color(0xFF334155),
-                        focusedTextColor     = TextPrimary,
-                        unfocusedTextColor   = TextPrimary,
-                        disabledTextColor    = TextSecond,
-                        disabledBorderColor  = Color(0xFF1E293B),
-                        cursorColor          = AccentCyan
+                        focusedBorderColor = AccentCyan, unfocusedBorderColor = Color(0xFF334155),
+                        focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                        disabledTextColor = TextSecond, disabledBorderColor = Color(0xFF1E293B)
                     ),
-                    maxLines = 4,
-                    shape = RoundedCornerShape(16.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSend() })
+                    maxLines = 6, shape = RoundedCornerShape(12.dp)
                 )
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Deep Think toggle
-                    IconButton(
-                        onClick = { onDeepThinkChange(!deepThink) },
-                        enabled = !isInferring,
-                        modifier = Modifier.size(36.dp)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = if (isInferring) onAbort else onRun,
+                        enabled = modelLoaded && !isLoading && (isInferring || promptInput.isNotBlank()),
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isInferring) AccentRed else AccentCyan)
                     ) {
-                        Icon(
-                            if (deepThink) Icons.Filled.Psychology else Icons.Outlined.Psychology,
-                            "Deep Think",
-                            tint = if (deepThink) AccentAmber else TextMuted,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Text(if (isInferring) "Stop" else "Send", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(Modifier.width(4.dp))
-                    if (deepThink) {
-                        Text("Deep Think", fontSize = 10.sp, color = AccentAmber,
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
-                    }
-
-                    Spacer(Modifier.weight(1f))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(
-                            onClick = onReset,
-                            enabled = modelLoaded && !isInferring,
-                            modifier = Modifier.height(34.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.5f)),
-                            colors  = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
-                        ) { Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(14.dp)) }
-                        OutlinedButton(
-                            onClick = onCopyChat,
-                            enabled = chatHistory.isNotEmpty(),
-                            modifier = Modifier.height(34.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, TextMuted.copy(alpha = 0.5f)),
-                            colors  = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
-                        ) { Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(14.dp)) }
-                        Button(
-                            onClick = if (isInferring) onAbort else onSend,
-                            enabled = modelLoaded && !isLoading &&
-                                (isInferring || promptInput.isNotBlank()),
-                            modifier = Modifier.height(40.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isInferring) AccentRed else AccentCyan)
-                        ) {
-                            Icon(
-                                if (isInferring) Icons.Filled.Stop else Icons.Filled.Send,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                if (isInferring) "Stop" else "Send",
-                                color = Color.Black, fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                    OutlinedButton(onClick = onReset, enabled = modelLoaded && !isInferring,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
+                    ) { Text("Reset", fontSize = 12.sp) }
+                    OutlinedButton(onClick = onCopyChat, enabled = chatHistory.isNotEmpty(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecond)
+                    ) { Text("Copy", fontSize = 12.sp) }
                 }
             }
         }
@@ -970,73 +596,26 @@ private fun ChatScreen(
 }
 
 @Composable
-private fun WelcomeCard() {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(88.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.sweepGradient(listOf(AccentCyan, AccentPurple, AccentGreen, AccentCyan))
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(76.dp)
-                    .clip(CircleShape)
-                    .background(BgDeep),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.Hub, null, tint = AccentCyan, modifier = Modifier.size(36.dp))
-            }
-        }
-        Spacer(Modifier.height(20.dp))
-                        Text("GGUF ZeroCopy v6",
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                            color = AccentCyan, fontSize = 22.sp)
-        Spacer(Modifier.height(4.dp))
-        Text("On-Device LLM Inference Engine",
-            color = AccentPurple, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+fun EmptyState() {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(Icons.Outlined.SmartToy, contentDescription = null, modifier = Modifier.size(64.dp), tint = AccentCyan)
         Spacer(Modifier.height(16.dp))
-        Text("Load a .gguf model to start chatting",
-            color = TextSecond, fontSize = 13.sp, textAlign = TextAlign.Center)
+        Text("GGUF ZeroCopy", fontFamily = FontFamily.Monospace, color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(8.dp))
+        Text("Load a model to start chatting", color = TextSecond, fontSize = 13.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(4.dp))
-        Text("Zero-copy IPC \u00B7 Vulkan GPU \u00B7 Q8_0 KV-Cache",
-            color = TextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        Spacer(Modifier.height(24.dp))
-        Surface(
-            modifier = Modifier.widthIn(max = 280.dp),
-            color = BgCard,
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Filled.Lightbulb, null, tint = AccentAmber, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Tap the \uD83D\uDCC2 button above or go to Models to load a GGUF file",
-                    color = TextSecond, fontSize = 11.sp, lineHeight = 16.sp)
-            }
-        }
+        Text("Supports GGUF, MNN, LiteRT-LM", color = TextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     }
 }
 
 @Composable
-private fun MessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
+fun MessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
     val isUser = msg.role == Role.USER
-    var showCopied by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
         if (!isUser) {
-            Avatar(AccentCyan, "AI")
+            Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(AccentCyan), contentAlignment = Alignment.Center) {
+                Text("AI", fontSize = 9.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+            }
             Spacer(Modifier.width(6.dp))
         }
         Column(modifier = Modifier.widthIn(max = 300.dp)) {
@@ -1044,768 +623,296 @@ private fun MessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
                 modifier = Modifier
                     .clip(RoundedCornerShape(
                         topStart = if (isUser) 16.dp else 4.dp,
-                        topEnd   = if (isUser) 4.dp else 16.dp,
+                        topEnd = if (isUser) 4.dp else 16.dp,
                         bottomStart = 16.dp, bottomEnd = 16.dp
                     ))
                     .background(if (isUser) UserBubble else BotBubble)
-                    .clickable {
-                        onCopy(msg.content)
-                        showCopied = true
-                    }
+                    .clickable { onCopy(msg.content) }
                     .padding(12.dp)
             ) {
-                Column {
-                    if (isUser) {
-                        Text(msg.content, color = TextPrimary, fontSize = 14.sp, lineHeight = 20.sp)
-                    } else {
-                        AssistantContent(msg.content)
-                    }
-                    AnimatedVisibility(visible = showCopied) {
-                        Text("Copied", fontSize = 9.sp, color = AccentGreen,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(top = 4.dp))
-                        LaunchedEffect(showCopied) {
-                            delay(1500)
-                            showCopied = false
-                        }
-                    }
-                }
+                Text(msg.content, color = TextPrimary, fontSize = 14.sp, lineHeight = 20.sp)
             }
-            Row(
-                modifier = Modifier.padding(top = 3.dp, start = 4.dp, end = 4.dp),
-                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-            ) {
-                val ts = SimpleDateFormat("HH:mm", Locale.getDefault())
-                    .format(Date(msg.timestamp))
+            Row(modifier = Modifier.padding(top = 3.dp, start = 4.dp, end = 4.dp),
+                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
+                val ts = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp))
                 Text(ts, color = TextMuted, fontSize = 10.sp)
-                if (!isUser && msg.tokensPerSec > 0f) {
+                if (!isUser && msg.tokensPerSec > 0) {
                     Spacer(Modifier.width(8.dp))
-                    Text("${"%.1f".format(msg.tokensPerSec)} t/s \u00B7 ${msg.tokenCount} tok",
-                        color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    Text("${"%.1f".format(msg.tokensPerSec)} t/s", color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 }
             }
         }
         if (isUser) {
             Spacer(Modifier.width(6.dp))
-            Avatar(AccentGreen, "U")
-        }
-    }
-}
-
-@Composable
-private fun Avatar(color: Color, text: String) {
-    Box(
-        modifier = Modifier.size(28.dp).clip(CircleShape).background(color),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text, fontSize = 10.sp, color = Color.Black, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun AssistantContent(text: String) {
-    val hasThink    = text.contains("<think>")
-    val thinkClosed = text.contains("</think>")
-    val thought     = if (hasThink) {
-        text.substringAfter("<think>")
-            .let { if (thinkClosed) it.substringBefore("</think>") else it }
-    } else ""
-    val response = when {
-        hasThink && thinkClosed -> text.substringAfter("</think>").trimStart()
-        hasThink                -> ""
-        else                    -> text
-    }
-
-    Column {
-        if (thought.isNotEmpty()) {
-            var expanded by remember { mutableStateOf(false) }
-            Surface(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { expanded = !expanded },
-                color = BgThink
-            ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Psychology, null, tint = AccentPurple, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (expanded) "Hide reasoning" else "Show reasoning",
-                            fontSize = 11.sp, color = AccentPurple,
-                            fontFamily = FontFamily.Monospace)
-                        if (!thinkClosed) {
-                            Spacer(Modifier.width(6.dp))
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(9.dp),
-                                color = AccentPurple, strokeWidth = 1.5.dp
-                            )
-                        }
-                    }
-                    AnimatedVisibility(visible = expanded) {
-                        Text(thought, fontSize = 12.sp, color = AccentPurple.copy(alpha = 0.7f),
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(top = 6.dp))
-                    }
-                }
+            Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(AccentGreen), contentAlignment = Alignment.Center) {
+                Text("U", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold)
             }
-            if (response.isNotEmpty()) Spacer(Modifier.height(6.dp))
-        }
-        if (response.isNotEmpty()) {
-            Text(response, color = AccentGreen.copy(alpha = 0.9f), fontSize = 14.sp,
-                lineHeight = 21.sp)
         }
     }
 }
 
 @Composable
-private fun StreamingBubble(text: String) {
+fun StreamingBubble(streamText: String) {
     val infiniteTransition = rememberInfiniteTransition(label = "cursor")
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 0f, targetValue = 1f, label = "cursorAlpha",
-        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse)
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start
-    ) {
-        Avatar(AccentCyan, "AI")
+    val alpha by infiniteTransition.animateFloat(initialValue = 0f, targetValue = 1f, label = "cursorAlpha",
+        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(AccentCyan), contentAlignment = Alignment.Center) {
+            Text("AI", fontSize = 9.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+        }
         Spacer(Modifier.width(6.dp))
-        Box(
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp,
-                    bottomStart = 16.dp, bottomEnd = 16.dp))
-                .background(BotBubble)
-                .padding(12.dp)
-        ) {
-            Column {
-                RichTextContent(text)
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("\u258A", color = AccentCyan.copy(alpha = alpha), fontSize = 14.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("generating\u2026", color = TextMuted, fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace)
-                }
-            }
+        Box(modifier = Modifier.widthIn(max = 300.dp)
+            .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp))
+            .background(BotBubble).padding(12.dp)) {
+            Text(streamText, color = TextPrimary, fontSize = 14.sp, lineHeight = 21.sp)
         }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Models Screen
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun RichTextContent(text: String) {
-    val parts = text.split("```")
-    parts.forEachIndexed { i, part ->
-        if (i % 2 == 0) {
-            Text(part, color = AccentGreen.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 20.sp)
-        } else {
-            val lines = part.split("\n")
-            val lang = if (lines.isNotEmpty() && lines[0].all { it.isLetterOrDigit() || it == '#' }) lines[0] else ""
-            val code = if (lang.isNotEmpty()) lines.drop(1).joinToString("\n") else part
-            Surface(
-                color = BgInput,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            ) {
-                Text(
-                    code.trimEnd(),
-                    color = AccentCyan,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(10.dp),
-                    lineHeight = 17.sp
-                )
-            }
-        }
-    }
-}
-
-// ── Models Screen ──
-@Composable
-private fun ModelsScreen(
-    modelLoaded: Boolean, modelFilename: String,
-    modelInfo: JSONObject?, engineStatus: String,
-    cpuInfo: DeviceUtils.CpuInfo?, gpuInfo: DeviceUtils.GpuInfo?,
-    onLoadModel: () -> Unit, onAutoDetect: () -> Unit
-) {
-    val scroll = rememberScrollState()
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Text("Model Manager", fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 18.sp)
-
-        Button(
-            onClick = onLoadModel,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
-        ) {
-            Icon(Icons.Filled.FolderOpen, null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Load GGUF Model", color = Color.Black, fontWeight = FontWeight.Bold)
-        }
-
-        // Quick device info card
-        Surface(
-            color = BgCard,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Memory, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Device Auto-Detect", fontWeight = FontWeight.SemiBold,
-                        color = AccentCyan, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
-                }
-                Spacer(Modifier.height(12.dp))
-                if (cpuInfo != null) {
-                    InfoRow("CPU Cores", "${cpuInfo.cores}")
-                    InfoRow("Architecture", cpuInfo.architecture)
-                    InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes \u2014 AATS enabled" else "No")
-                    InfoRow("Max Freq", "${cpuInfo.maxFrequencyMHz} MHz")
-                    InfoRow("Suggested", "${cpuInfo.suggestedThreads}t / ${cpuInfo.suggestedGpuLayers}GL")
-                } else {
-                    Text("Tap 'Auto-Detect' to scan your device",
-                        fontSize = 12.sp, color = TextSecond)
-                }
-                Spacer(Modifier.height(12.dp))
-                OutlinedButton(
-                    onClick = onAutoDetect,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.5f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
-                ) { Text("\u2699 Auto-Detect & Configure", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
-            }
-        }
+fun ModelsScreen(modelLoaded: Boolean, modelFilename: String, modelInfo: JSONObject?, totalTokens: Int, onUnload: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Models", fontSize = 20.sp, color = AccentCyan, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
 
         if (!modelLoaded) {
-            Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
-                contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.SmartToy, null, tint = TextMuted, modifier = Modifier.size(56.dp))
-                    Spacer(Modifier.height(16.dp))
-                    Text("No model loaded", color = TextSecond, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Tap the button above to select a .gguf file",
-                        color = TextMuted, fontSize = 12.sp)
-                }
+            Box(modifier = Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
+                Text("No model loaded", color = TextSecond)
             }
         } else {
-            Surface(
-                color = BgCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
-            ) {
+            Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Description, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Loaded Model", fontWeight = FontWeight.SemiBold,
-                            color = AccentCyan, fontSize = 14.sp)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    InfoRow("File", modelFilename)
-                    InfoRow("Status", engineStatus)
-                    if (modelInfo != null) {
-                        HorizontalDivider(
-                            color = Color(0xFF2A2F3E),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                        val keys = modelInfo.keys()
+                    Text("Current Model", fontSize = 14.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(modelFilename, color = TextPrimary, fontSize = 13.sp)
+                    Spacer(Modifier.height(4.dp))
+                    modelInfo?.let { info ->
+                        val keys = info.keys()
                         while (keys.hasNext()) {
                             val k = keys.next()
-                            InfoRow(k.replace("_", " ").replaceFirstChar { it.uppercase() },
-                                modelInfo.optString(k, "\u2014"))
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                                Text(k, fontSize = 11.sp, color = TextSecond, modifier = Modifier.weight(1f))
+                                Text(info.optString(k, "—"), fontSize = 11.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                            }
                         }
                     }
-                }
-            }
-
-            Surface(
-                color = BgCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.1f))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Architecture, null, tint = AccentPurple, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Architecture", fontWeight = FontWeight.SemiBold,
-                            color = AccentPurple, fontSize = 14.sp)
-                    }
                     Spacer(Modifier.height(8.dp))
-                    Text("ASharedMemory ring buffer\n" +
-                        "write_pos(4) | flags(4) | tokens_gen(4) | tps_scaled(4) | data(512KB)\n\n" +
-                        "C++ ipc-bridge writes tokens as UTF-8 into data region.\n" +
-                        "Kotlin polls isInferenceDone() every 80ms.\n" +
-                        "Q8_0 KV-Cache quantization for 2x context density.\n" +
-                        "AATS: adaptive thread scaling for big.LITTLE CPUs.",
-                        fontSize = 11.sp, color = TextSecond, fontFamily = FontFamily.Monospace,
-                        lineHeight = 18.sp)
+                    Text("Total tokens generated: $totalTokens", fontSize = 11.sp, color = TextMuted)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onUnload, colors = ButtonDefaults.buttonColors(containerColor = AccentRed)) {
+                        Text("Unload Model", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
+        }
 
-            Surface(
-                color = BgCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.1f))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.DevicesOther, null, tint = AccentGreen, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Device", fontWeight = FontWeight.SemiBold,
-                            color = AccentGreen, fontSize = 14.sp)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    InfoRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                    InfoRow("Android", "${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE})")
-                    val ram = (Runtime.getRuntime().totalMemory() / 1048576)
-                    InfoRow("RAM (App)", "${ram} MB")
-                    if (cpuInfo != null) {
-                        HorizontalDivider(
-                            color = Color(0xFF2A2F3E),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                        InfoRow("CPU Cores", "${cpuInfo.cores}")
-                        InfoRow("Features", cpuInfo.features.take(4).joinToString(" "))
-                    }
-                    val freeStorage = runCatching {
-                        val stat = StatFs(Environment.getDataDirectory().path)
-                        stat.availableBytes / 1073741824
-                    }.getOrNull()
-                    if (freeStorage != null) {
-                        InfoRow("Free Storage", "${freeStorage} GB")
-                    }
-                }
+        // Supported formats
+        Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Supported Formats", fontSize = 14.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                FormatRow("GGUF", "llama.cpp", "MIT", "Vulkan/OpenCL GPU")
+                FormatRow("MNN", "MNN-LLM", "Apache 2.0", "8.6x faster CPU")
+                FormatRow("TFLite/LiteRT", "LiteRT-LM", "Apache 2.0", "GPU/NPU")
             }
         }
     }
 }
 
 @Composable
-private fun InfoRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(label, fontSize = 12.sp, color = TextSecond, modifier = Modifier.weight(1f))
-        Text(value, fontSize = 12.sp, color = TextPrimary,
-            fontFamily = FontFamily.Monospace)
+fun FormatRow(format: String, engine: String, license: String, note: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(format, fontSize = 12.sp, color = AccentCyan, fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
+        Text(engine, fontSize = 12.sp, color = TextPrimary, modifier = Modifier.width(80.dp))
+        Text(license, fontSize = 11.sp, color = TextMuted, modifier = Modifier.width(90.dp))
+        Text(note, fontSize = 11.sp, color = TextSecond)
     }
 }
 
-// ── Settings Screen ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings Screen
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun SettingsScreen(
+fun SettingsScreen(
     nCtxStr: String, onNCtxChange: (String) -> Unit,
-    maxTokStr: String, onMaxTokChange: (String) -> Unit,
+    maxTokensStr: String, onMaxTokensChange: (String) -> Unit,
     tempStr: String, onTempChange: (String) -> Unit,
     topPStr: String, onTopPChange: (String) -> Unit,
     minPStr: String, onMinPChange: (String) -> Unit,
-    gpuLStr: String, onGpuLChange: (String) -> Unit,
-    threadsStr: String, onThreadsChange: (String) -> Unit,
-    repPenStr: String, onRepPenChange: (String) -> Unit,
+    gpuLayersStr: String, onGpuLayersChange: (String) -> Unit,
+    nThreadsStr: String, onNThreadsChange: (String) -> Unit,
+    repeatPenStr: String, onRepeatPenChange: (String) -> Unit,
     freqPenStr: String, onFreqPenChange: (String) -> Unit,
     presPenStr: String, onPresPenChange: (String) -> Unit,
-    sysPrompt: String, onSysPromptChange: (String) -> Unit,
-    deepThink: Boolean, onDeepThinkChange: (Boolean) -> Unit,
-    cpuInfo: DeviceUtils.CpuInfo?, gpuInfo: DeviceUtils.GpuInfo?,
-    onAutoDetect: () -> Unit, onImportPreset: () -> Unit, onApply: () -> Unit
+    systemPrompt: String, onSystemPromptChange: (String) -> Unit,
+    onApply: () -> Unit, onAutoDetect: () -> Unit
 ) {
-    val scroll = rememberScrollState()
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        SettingsHeader("Device & Performance")
-        Surface(
-            color = BgCard,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
-        ) {
-            Column(modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (cpuInfo != null) {
-                    InfoRow("CPU", "${cpuInfo.cores} cores | ${cpuInfo.architecture}")
-                    if (cpuInfo.cpuPartNames.isNotEmpty())
-                        InfoRow("Part", cpuInfo.cpuPartNames.joinToString(" "))
-                    InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes \u2014 auto-tuned" else "No")
-                    InfoRow("Max Freq", "${cpuInfo.maxFrequencyMHz} MHz")
-                    HorizontalDivider(color = Color(0xFF2A2F3E))
-                    InfoRow("Threads", "${cpuInfo.suggestedThreads} (suggested)")
-                    InfoRow("GPU Layers", "${cpuInfo.suggestedGpuLayers} (suggested)")
-                    if (cpuInfo.features.isNotEmpty())
-                        InfoRow("Features", cpuInfo.features.take(5).joinToString(" "))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = onAutoDetect,
-                        modifier = Modifier.weight(1f).height(40.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
-                    ) { Text("\u26A1 Auto-Detect", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-                    OutlinedButton(
-                        onClick = onImportPreset,
-                        modifier = Modifier.weight(1f).height(40.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
-                    ) { Text("\uD83D\uDCC2 Import Preset", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-                }
-            }
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Settings", fontSize = 20.sp, color = AccentCyan, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+
+        // Auto-detect button
+        Button(onClick = onAutoDetect, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AccentPurple)) {
+            Text("Auto-Detect Device", color = Color.Black, fontWeight = FontWeight.Bold)
         }
 
-        SettingsHeader("Context & Generation")
-        SettingsCard {
-            SettingField("Context Window", "512\u201332768", nCtxStr, onNCtxChange)
-            SettingField("Max New Tokens", "64\u20138192", maxTokStr, onMaxTokChange)
-            SettingField("GPU Layers", "99=GPU, 0=CPU", gpuLStr, onGpuLChange)
-            SettingField("CPU Threads", "1\u201316", threadsStr, onThreadsChange)
+        SettingsSection("Context & Generation") {
+            SettingRow("Context Window", "512-32768. 8192 safe for 6-8GB RAM.", nCtxStr, onNCtxChange)
+            SettingRow("Max New Tokens", "64-8192 per turn.", maxTokensStr, onMaxTokensChange)
+            SettingRow("GPU Layers", "99=GPU, 0=CPU. Auto-detected.", gpuLayersStr, onGpuLayersChange)
+            SettingRow("CPU Threads", "1-16. Auto-detected.", nThreadsStr, onNThreadsChange)
+        }
+        SettingsSection("Sampling") {
+            SettingRow("Temperature", "0=deterministic, 1.0=creative.", tempStr, onTempChange)
+            SettingRow("Top-P", "0-1 nucleus sampling.", topPStr, onTopPChange)
+            SettingRow("Min-P", "0-1 low-prob filter.", minPStr, onMinPChange)
+        }
+        SettingsSection("Repetition") {
+            SettingRow("Repeat Penalty", "1.0=off.", repeatPenStr, onRepeatPenChange)
+            SettingRow("Frequency Penalty", "0.0=off.", freqPenStr, onFreqPenChange)
+            SettingRow("Presence Penalty", "0.0=off.", presPenStr, onPresPenChange)
+        }
+        SettingsSection("System Prompt") {
+            OutlinedTextField(value = systemPrompt, onValueChange = onSystemPromptChange,
+                modifier = Modifier.fillMaxWidth(), maxLines = 6,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AccentCyan, unfocusedBorderColor = Color(0xFF334155),
+                    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace))
         }
 
-        SettingsHeader("Sampling")
-        SettingsCard {
-            SettingField("Temperature", "0\u20132.0", tempStr, onTempChange)
-            SettingField("Top-P", "0\u20131.0", topPStr, onTopPChange)
-            SettingField("Min-P", "0\u20131.0", minPStr, onMinPChange)
-        }
-
-        SettingsHeader("Repetition Penalty")
-        SettingsCard {
-            SettingField("Repeat Penalty", "1.0=off", repPenStr, onRepPenChange)
-            SettingField("Frequency Penalty", "0.0=off", freqPenStr, onFreqPenChange)
-            SettingField("Presence Penalty", "0.0=off", presPenStr, onPresPenChange)
-        }
-
-        SettingsHeader("System Prompt")
-        OutlinedTextField(
-            value = sysPrompt,
-            onValueChange = onSysPromptChange,
-            modifier = Modifier.fillMaxWidth(),
-            maxLines = 5,
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AccentCyan,
-                unfocusedBorderColor = Color(0xFF334155),
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
-                cursorColor = AccentCyan
-            ),
-            textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 12.sp, fontFamily = FontFamily.Monospace
-            )
-        )
-
-        SettingsHeader("Reasoning")
-        Surface(
-            color = BgCard,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, if (deepThink) AccentAmber.copy(alpha = 0.3f) else Color(0xFF2A2F3E))
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    if (deepThink) Icons.Filled.Psychology else Icons.Outlined.Psychology,
-                    null,
-                    tint = if (deepThink) AccentAmber else TextMuted,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Deep Think", fontSize = 14.sp, color = TextPrimary,
-                        fontWeight = FontWeight.SemiBold)
-                    Text("Chain-of-thought reasoning for complex problems",
-                        fontSize = 11.sp, color = TextSecond)
-                }
-                Switch(
-                    checked = deepThink,
-                    onCheckedChange = onDeepThinkChange,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = AccentAmber,
-                        checkedTrackColor = AccentAmber.copy(alpha = 0.3f)
-                    )
-                )
-            }
-        }
-
-        SettingsHeader("Quick Presets")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                "Qwen3"     to Triple("8192", "0.6", "You are a helpful assistant."),
-                "Gemma 4"   to Triple("8192", "0.7", "You are a helpful assistant."),
-                "Reasoning" to Triple("16384","0.6", "Think step-by-step before answering."),
-                "Creative"  to Triple("8192", "1.0", "You are a creative storyteller.")
-            ).forEach { (label, v) ->
-                OutlinedButton(
-                    onClick = {
-                        onNCtxChange(v.first)
-                        onTempChange(v.second)
-                        onSysPromptChange(v.third)
-                    },
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.4f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
-                ) { Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) }
-            }
-        }
-
-        Button(
-            onClick = onApply,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
-        ) {
-            Icon(Icons.Filled.Check, null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
+        Button(onClick = onApply, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) {
             Text("Apply Settings", color = Color.Black, fontWeight = FontWeight.Bold)
         }
-
-        Surface(
-            color = AccentAmber.copy(alpha = 0.08f),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Row(modifier = Modifier.padding(12.dp)) {
-                Icon(Icons.Filled.Info, null, tint = AccentAmber, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Apply Settings reloads the model so all changes take effect immediately.",
-                    fontSize = 11.sp, color = AccentAmber, fontFamily = FontFamily.Monospace,
-                    lineHeight = 16.sp)
-            }
-        }
+        Text("Note: Context and GPU layers require model reload.", fontSize = 11.sp, color = AccentAmber, fontFamily = FontFamily.Monospace)
     }
 }
 
 @Composable
-private fun SettingsHeader(title: String) {
-    Text(title, fontSize = 14.sp, color = AccentCyan,
-        fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
-}
-
-@Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = BgCard,
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = BgCard), shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, fontSize = 13.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
             content()
         }
     }
 }
 
 @Composable
-private fun SettingField(label: String, hint: String, value: String, onChange: (String) -> Unit) {
+fun SettingRow(label: String, hint: String, value: String, onChange: (String) -> Unit) {
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, fontSize = 13.sp, color = TextPrimary, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.width(8.dp))
-            Text(hint, fontSize = 10.sp, color = TextMuted, fontFamily = FontFamily.Monospace)
-        }
-        Spacer(Modifier.height(4.dp))
-        OutlinedTextField(
-            value = value, onValueChange = onChange,
-            modifier = Modifier.fillMaxWidth(), singleLine = true,
-            shape = RoundedCornerShape(10.dp),
+        Text(label, fontSize = 12.sp, color = TextSecond, fontWeight = FontWeight.Medium)
+        Text(hint, fontSize = 10.sp, color = TextMuted)
+        OutlinedTextField(value = value, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AccentCyan,
-                unfocusedBorderColor = Color(0xFF334155),
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
-                cursorColor = AccentCyan
-            ),
-            textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 14.sp, fontFamily = FontFamily.Monospace
-            )
-        )
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AccentCyan, unfocusedBorderColor = Color(0xFF334155),
+                focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontFamily = FontFamily.Monospace))
     }
 }
 
-// ── Info Screen ──
+// ─────────────────────────────────────────────────────────────────────────────
+// Info Screen
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun InfoScreen(
-    modelLoaded: Boolean, modelInfo: JSONObject?,
-    modelFilename: String, totalTokens: Int,
-    cpuInfo: DeviceUtils.CpuInfo?, gpuInfo: DeviceUtils.GpuInfo?
-) {
-    val scroll = rememberScrollState()
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scroll),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Text("Device & Model Info", fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 18.sp)
-
-        InfoCard("Device") {
-            InfoRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
-            InfoRow("Android", "${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE})")
-            if (cpuInfo != null) {
-                HorizontalDivider(color = Color(0xFF2A2F3E), modifier = Modifier.padding(vertical = 6.dp))
-                InfoRow("CPU Cores", "${cpuInfo.cores}")
-                InfoRow("Architecture", cpuInfo.architecture)
-                InfoRow("big.LITTLE", if (cpuInfo.isBigLittle) "Yes" else "No")
-                InfoRow("Max Freq", "${cpuInfo.maxFrequencyMHz} MHz")
-                if (cpuInfo.features.isNotEmpty())
-                    InfoRow("Features", cpuInfo.features.joinToString(" "))
-            }
-            if (gpuInfo != null) {
-                HorizontalDivider(color = Color(0xFF2A2F3E), modifier = Modifier.padding(vertical = 6.dp))
-                InfoRow("GPU", gpuInfo.renderer)
-                InfoRow("Vendor", gpuInfo.vendor)
-                InfoRow("Vulkan", if (gpuInfo.hasVulkan) "Available" else "N/A")
-            }
-            HorizontalDivider(color = Color(0xFF2A2F3E), modifier = Modifier.padding(vertical = 6.dp))
-            val ram = (Runtime.getRuntime().totalMemory() / 1048576)
-            InfoRow("RAM (App)", "${ram} MB")
-        }
+fun InfoScreen(modelInfo: JSONObject?, modelFilename: String, totalTokens: Int, modelLoaded: Boolean) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Info", fontSize = 20.sp, color = AccentCyan, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
 
         if (!modelLoaded) {
-            Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
-                contentAlignment = Alignment.Center) {
-                Text("Load a model to see more information", color = TextSecond, fontSize = 13.sp)
+            Box(modifier = Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
+                Text("Load a model to see info", color = TextSecond)
             }
-            return
+            return@Column
         }
 
-        InfoCard("Model") {
-            InfoRow("File", modelFilename)
-        }
-
-        modelInfo?.let { info ->
-            InfoCard("Metadata") {
-                val keys = info.keys()
-                while (keys.hasNext()) {
-                    val k = keys.next()
-                    InfoRow(k.replace("_", " ")
-                        .replaceFirstChar { it.uppercase() }, info.optString(k, "\u2014"))
-                }
+        Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text("Architecture", fontSize = 13.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(8.dp))
+                Text("ASharedMemory ring buffer\nwrite_pos(4) | flags(4) | tokens_gen(4) | reserved(4) | data(512KB)\n\nKotlin polls shared memory every 80ms.\nC++ writes tokens as UTF-8 into data region.",
+                    fontSize = 11.sp, color = TextSecond, fontFamily = FontFamily.Monospace, lineHeight = 17.sp)
             }
         }
 
-        InfoCard("Session") {
-            InfoRow("Total Tokens", "$totalTokens")
+        Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text("Performance", fontSize = 13.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(8.dp))
+                Text("- Big core pinning (sched_setaffinity)\n- Process priority boost (-20)\n- RAM locking (mlockall)\n- ThinLTO + armv8.4a+dotprod+crc\n- OpenCL for Adreno / Vulkan for Mali",
+                    fontSize = 11.sp, color = TextSecond, fontFamily = FontFamily.Monospace, lineHeight = 17.sp)
+            }
         }
 
-        InfoCard("Architecture") {
-            InfoRow("Memory", "ASharedMemory ring buffer (512 KB)")
-            InfoRow("KV Cache", "Q8_0 quantization (2x density)")
-            InfoRow("IPC", "Zero-copy shared memory")
-            InfoRow("GPU", "Vulkan Unified Memory")
-            InfoRow("Threading", "AATS (Adaptive Asymmetric Thread Scaling)")
+        Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text("Licenses (Open Source)", fontSize = 13.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(8.dp))
+                Text(LicenseNotices.getShortNotices(), fontSize = 11.sp, color = TextSecond, fontFamily = FontFamily.Monospace, lineHeight = 17.sp)
+            }
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text("Session Stats", fontSize = 13.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(8.dp))
+                Text("Total Tokens Generated: $totalTokens", fontSize = 12.sp, color = TextPrimary)
+            }
         }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bench Screen
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        color = BgCard,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Info, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(title, fontSize = 14.sp, color = AccentCyan,
-                    fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
-            }
-            Spacer(Modifier.height(10.dp))
-            content()
-        }
-    }
-}
+fun BenchScreen(modelLoaded: Boolean, benchResult: String, isBenching: Boolean, onRunBench: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(16.dp))
+        Text("Benchmark", color = AccentCyan, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text("Measures prompt-processing (PP) and token-generation (TG) speed.", color = TextSecond, fontSize = 12.sp, textAlign = TextAlign.Center)
 
-// ── Benchmark Screen ──
-@Composable
-private fun BenchScreen(
-    modelLoaded: Boolean, benchResult: String,
-    isBenching: Boolean, onRunBench: () -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(8.dp))
-        Text("Performance Benchmark", color = AccentCyan,
-            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Text("Measures prompt-processing (PP) and token-generation (TG) speed.",
-            color = TextSecond, fontSize = 13.sp, textAlign = TextAlign.Center)
-
-        Button(
-            onClick = onRunBench,
-            enabled = modelLoaded && !isBenching,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
-        ) {
+        Button(onClick = onRunBench, enabled = modelLoaded && !isBenching, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)) {
             if (isBenching) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp),
-                    color = Color.Black, strokeWidth = 2.dp)
-                Spacer(Modifier.width(10.dp))
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
             }
-            Text(if (isBenching) "Benchmarking\u2026" else "\u25B6 Run Benchmark (PP=512, TG=128)",
-                color = Color.Black, fontWeight = FontWeight.Bold)
+            Text(if (isBenching) "Benchmarking..." else "Run Benchmark (PP=512, TG=128)", color = Color.Black, fontWeight = FontWeight.Bold)
         }
 
-        if (!modelLoaded)
-            Text("Load a model first.", color = AccentRed, fontSize = 13.sp)
+        if (!modelLoaded) Text("Load a model first.", color = AccentRed, fontSize = 13.sp)
 
-        var ppTps = 0.0; var tgTps = 0.0; var ppMs = 0.0; var tgMs = 0.0
-        var parseError = false
+        var ppTps = 0.0; var tgTps = 0.0; var parseError = false
         try {
             if (benchResult.isNotEmpty()) {
                 val obj = JSONObject(benchResult)
                 ppTps = obj.optDouble("pp_tps", 0.0)
                 tgTps = obj.optDouble("tg_tps", 0.0)
-                ppMs  = obj.optDouble("pp_ms", 0.0)
-                tgMs  = obj.optDouble("tg_ms", 0.0)
             }
-        } catch (_: Exception) { parseError = true }
+        } catch (e: Exception) { parseError = true }
 
-        if (benchResult.isNotEmpty() && !parseError && (ppTps > 0.0 || tgTps > 0.0)) {
+        if (benchResult.isNotEmpty() && !parseError && (ppTps > 0 || tgTps > 0)) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                BenchCard("Prompt\nProcessing", "${"%.1f".format(ppTps)} t/s",
-                    "${"%.0f".format(ppMs)} ms")
-                BenchCard("Token\nGeneration", "${"%.1f".format(tgTps)} t/s",
-                    "${"%.0f".format(tgMs)} ms")
+                BenchCard("Prompt Processing", "%.1f".format(ppTps), "tokens/sec")
+                BenchCard("Token Generation", "%.1f".format(tgTps), "tokens/sec")
             }
         } else if (benchResult.isNotEmpty()) {
-            Surface(
-                color = BgCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.1f))
-            ) {
-                Text(benchResult, modifier = Modifier.padding(16.dp),
-                    color = TextPrimary, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            Card(colors = CardDefaults.cardColors(containerColor = BgCard)) {
+                Text(benchResult, modifier = Modifier.padding(12.dp), color = TextPrimary, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
         }
     }
 }
 
 @Composable
-private fun BenchCard(title: String, value: String, subtitle: String) {
-    Surface(
-        color  = BgCard,
-        shape  = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.15f)),
-        modifier = Modifier.width(150.dp)
-    ) {
-        Column(modifier = Modifier.padding(18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, fontSize = 30.sp, fontWeight = FontWeight.Bold,
-                color = AccentCyan, fontFamily = FontFamily.Monospace)
-            Text(subtitle, fontSize = 12.sp, color = TextSecond)
-            Spacer(Modifier.height(6.dp))
-            Text(title, fontSize = 12.sp, color = TextPrimary,
-                textAlign = TextAlign.Center, lineHeight = 16.sp)
+fun BenchCard(label: String, value: String, unit: String) {
+    Card(colors = CardDefaults.cardColors(containerColor = BgCard), shape = RoundedCornerShape(16.dp), modifier = Modifier.width(150.dp)) {
+        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(value, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = AccentCyan, fontFamily = FontFamily.Monospace)
+            Text(unit, fontSize = 11.sp, color = TextSecond)
+            Spacer(Modifier.height(4.dp))
+            Text(label, fontSize = 12.sp, color = TextPrimary, textAlign = TextAlign.Center)
         }
     }
 }
