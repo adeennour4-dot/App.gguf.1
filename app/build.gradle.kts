@@ -17,9 +17,9 @@ android {
 
         externalNativeBuild {
             cmake {
-                // Performance flags: ThinLTO, NEON FP16, native CPU tuning
-                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -mcpu=native -mfpu=neon-fp-armv8 -fno-stack-protector")
-                cFlags  ("-O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -mcpu=native -mfpu=neon-fp-armv8 -fno-stack-protector")
+                // Performance flags: ThinLTO, ARMv8.6-a with NEON FP16
+                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
+                cFlags  ("-O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
                 arguments(
                     "-DANDROID_STL=c++_shared",
                     "-DGGML_OPENMP=OFF",
