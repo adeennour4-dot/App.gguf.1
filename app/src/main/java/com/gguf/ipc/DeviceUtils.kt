@@ -101,7 +101,8 @@ object DeviceUtils {
             modelSizeB <= 3f -> 4096
             modelSizeB <= 7f -> 2048
             else -> 1024
-        }.coerceAtMost((availableForContext / 4).toInt()) // ~4 bytes per token in KV cache
+        }.coerceAtMost((availableForContext * 2).toInt()) // ~0.5 bytes per token in Q4_K_M KV cache
+            .coerceAtLeast(2048)                          // Never go below 2K — RAM guard handles OOM
 
         return InferenceEngine.Config(
             nCtx = suggestedCtx,
