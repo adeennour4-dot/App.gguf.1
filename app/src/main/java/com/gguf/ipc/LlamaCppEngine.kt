@@ -14,7 +14,12 @@ class LlamaCppEngine : InferenceEngine {
     private var currentModelPath = ""
     private var kvCacheUsage = 0
 
-    private const val TAG = "LlamaCppEngine"
+    companion object {
+        private const val TAG = "LlamaCppEngine"
+    }
+
+    // Callback-managed state
+    private val partialStream = StringBuilder()
 
     // Callback-managed state
     private val partialStream = StringBuilder()
@@ -79,10 +84,10 @@ class LlamaCppEngine : InferenceEngine {
             override fun onDone() {
                 inferenceDone.set(true)
             }
-            override fun onError(error: String) {
-                android.util.Log.e(TAG, "Inference error: $error")
-                inferenceDone.set(true)
-            }
+    override fun onError(error: String) {
+        android.util.Log.e(Companion.TAG, "Inference error: $error")
+        inferenceDone.set(true)
+    }
             override fun onKvCacheUsage(percent: Int) {
                 kvCacheUsage = percent
             }
