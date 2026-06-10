@@ -29,11 +29,24 @@ class LlamaCppEngine : InferenceEngine {
     }
 
     override fun setConfig(config: InferenceEngine.Config) {
-        EngineCore.setEngineConfig(config)
+        EngineCore.setEngineConfig(EngineCore.Config(
+            nCtx = config.nCtx,
+            maxNewTokens = config.maxNewTokens,
+            temperature = config.temperature,
+            topP = config.topP,
+            minP = config.minP,
+            nGpuLayers = config.nGpuLayers,
+            nThreads = config.nThreads,
+            seed = config.seed
+        ))
     }
 
     override fun setRepeatPenalty(config: InferenceEngine.RepeatPenaltyConfig) {
-        EngineCore.setRepeatPenalty(config)
+        EngineCore.setRepeatPenalty(EngineCore.RepeatPenaltyConfig(
+            repeatPenalty = config.repeatPenalty,
+            freqPenalty = config.freqPenalty,
+            presPenalty = config.presPenalty
+        ))
     }
 
     override fun setSystemPrompt(prompt: String) {

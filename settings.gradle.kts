@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "GGUF-ZeroCopy-v5"
+rootProject.name = "GGUF-ZeroCopy-v6"
 include(":app")
