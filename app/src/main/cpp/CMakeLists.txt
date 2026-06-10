@@ -23,8 +23,10 @@ endif()
 # ---------------------------------------------------------------------------
 
 # GPU backends
-option(GGML_VULKAN "Enable Vulkan GPU backend" ON)
-option(GGML_OPENCL "Enable OpenCL GPU backend" ON)  # v6: enabled — headers fetched via Khronos
+# Disabled in CI due to missing SPIRV-Headers and OpenCL libs
+# Enable locally if SPIRV-Headers and OpenCL SDK are available
+option(GGML_VULKAN "Enable Vulkan GPU backend" OFF)
+option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)
 
 # CPU optimizations
 set(GGML_CPU_KLEIDIAI   OFF CACHE BOOL "" FORCE)  # KleidiAI ARM micro-kernels (disabled — b9474 kernel mismatch)
@@ -37,33 +39,6 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_FLASH_ATTN ON CACHE BOOL "" FORCE)
 
 # ---------------------------------------------------------------------------
-# Vulkan dependency: SPIRV-Headers
-# ---------------------------------------------------------------------------
-if(GGML_VULKAN)
-    find_package(SPIRV-Headers QUIET)
-    if(NOT SPIRV-Headers_FOUND)
-        message(WARNING "SPIRV-Headers not found, disabling Vulkan backend")
-        set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
-    endif()
-endif()
-
-# ---------------------------------------------------------------------------
-# Fetch OpenCL headers (Khronos) — needed by ggml-opencl for Adreno GPUs
-# ---------------------------------------------------------------------------
-FetchContent_Declare(
-    opencl_headers
-    GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-Headers.git
-    GIT_TAG        main
-    GIT_SHALLOW    TRUE
-)
-
-# Populate OpenCL headers before llama.cpp (which may check for them)
-FetchContent_GetProperties(opencl_headers)
-if(NOT opencl_headers_POPULATED)
-    FetchContent_Populate(opencl_headers)
-endif()
-
-# ---------------------------------------------------------------------------
 # Fetch llama.cpp — pinned to stable release b9474 (2026-06-02)
 # ---------------------------------------------------------------------------
 FetchContent_Declare(
@@ -74,17 +49,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama)
 
-# Ensure OpenCL headers are available for ggml-opencl compilation
-if(GGML_OPENCL)
-    target_include_directories(llama PRIVATE ${opencl_headers_SOURCE_DIR})
-    # Also add globally so ggml's cmake can find CL/cl.h
-    include_directories(${opencl_headers_SOURCE_DIR})
-endif()
-
 message(STATUS "Build config — Vulkan: ${GGML_VULKAN} | OpenCL: ${GGML_OPENCL} | KleidiAI: ${GGML_CPU_KLEIDIAI} | tag: b9474")
-if(GGML_OPENCL)
-    message(STATUS "OpenCL headers: ${opencl_headers_SOURCE_DIR}")
-endif()
 
 # ---------------------------------------------------------------------------
 # Fetch MNN (Alibaba MNN-LLM)
