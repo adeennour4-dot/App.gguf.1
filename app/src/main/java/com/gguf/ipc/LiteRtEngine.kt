@@ -79,7 +79,7 @@ class LiteRtEngine : InferenceEngine {
             val cfgCls = engineConfigClass ?: return false
             val bckCpuCls = backendCpuClass ?: return false
 
-            val cpuBackend = bckCpuCls.getConstructor(Integer::class.java).newInstance(null)
+            val cpuBackend = bckCpuCls.getConstructor(Int::class.javaObjectType).newInstance(null)
 
             val engineConfigCtor = cfgCls.constructors.first()
             val config = engineConfigCtor.newInstance(

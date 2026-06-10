@@ -45,7 +45,7 @@ object DeviceUtils {
         val bigCores = detectBigCores()
         val littleCores = (0 until cpuCores).filter { it !in bigCores }
 
-        val socModel = Build.SOC_MODEL ?: Build.HARDWARE ?: "unknown"
+        val socModel = Build.SOC_MODEL.ifEmpty { Build.HARDWARE }.ifEmpty { "unknown" }
         val isSnapdragon = socModel.lowercase().contains("snapdragon") ||
                 socModel.lowercase().contains("qcom") ||
                 Build.MANUFACTURER.lowercase().contains("qualcomm")
