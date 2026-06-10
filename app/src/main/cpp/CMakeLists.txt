@@ -12,8 +12,9 @@ include(FetchContent)
 # ---------------------------------------------------------------------------
 # Target armv8.6-a with dotprod, i8mm, fp16 — covers most modern Android SoCs
 # (Snapdragon 8 Gen 2+, Dimensity 9200+, Exynos 2200+)
+# Use -mcpu=native for auto-detection on build machine, plus explicit flags
 if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(ARM_ARCH_FLAGS "-march=armv8.6-a+dotprod+i8mm+fp16")
+    set(ARM_ARCH_FLAGS "-march=armv8.6-a+dotprod+i8mm+fp16 -mcpu=native -mfpu=neon-fp-armv8")
     set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   ${ARM_ARCH_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARM_ARCH_FLAGS}")
 endif()

@@ -350,6 +350,7 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx           = g_cfg.n_ctx;
     cparams.n_batch         = g_cfg.n_batch;
+    cparams.n_ubatch        = g_cfg.n_batch;  // CRITICAL: Set uBatch = batch for fast prefill (default 512 is too slow)
     cparams.n_threads       = n_threads;
     cparams.n_threads_batch = n_threads;
 
