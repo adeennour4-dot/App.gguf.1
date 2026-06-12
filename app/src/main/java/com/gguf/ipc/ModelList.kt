@@ -11,8 +11,24 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+// ── Palette (duplicate for ModelList access) ──────────────────────────
+private object PalModelList {
+    val Bg = Color(0xFF0A0A0F)
+    val Surface = Color(0xFF141420)
+    val Card = Color(0xFF1A1A2E)
+    val CardLight = Color(0xFF22223A)
+    val Text = Color(0xFFEAEAEE)
+    val Text2 = Color(0xFF9898AA)
+    val Text3 = Color(0xFF5C5C72)
+    val Accent = Color(0xFF6C63FF)
+    val Red = Color(0xFFFF4757)
+    val Purple = Color(0xFFBB86FC)
+    val ThinkBg = Color(0xFF1E1A33)
+}
 
 // Model List Dialog Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,10 +43,7 @@ fun ModelListDialog(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Pal.Card,
-        dragHandle = {
-            BottomSheetDragHandle()
-        }
+        containerColor = PalModelList.Card
     ) {
         Column(
             modifier = Modifier
@@ -45,14 +58,14 @@ fun ModelListDialog(
                     "Your Models",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Pal.Text
+                    color = PalModelList.Text
                 )
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onImportClicked) {
                     Icon(
                         Icons.Filled.Add,
                         "Import",
-                        tint = Pal.Accent,
+                        tint = PalModelList.Accent,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -67,7 +80,7 @@ fun ModelListDialog(
                 ) {
                     Text(
                         "No models imported yet\nTap + to add one",
-                        color = Pal.Text3,
+                        color = PalModelList.Text3,
                         fontSize = 14.sp
                     )
                 }
@@ -102,7 +115,7 @@ fun ModelListItem(
             .padding(vertical = 4.dp)
             .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
-        color = Pal.CardLight
+        color = PalModelList.CardLight
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -116,13 +129,13 @@ fun ModelListItem(
             Column(Modifier.weight(1f)) {
                 Text(
                     model.name,
-                    color = Pal.Text,
+                    color = PalModelList.Text,
                     fontSize = 14.sp,
                     maxLines = 1
                 )
                 Text(
                     "${model.format.uppercase()} • ${ModelManager.formatSize(model.sizeBytes)}",
-                    color = Pal.Text3,
+                    color = PalModelList.Text3,
                     fontSize = 11.sp
                 )
             }
@@ -133,7 +146,7 @@ fun ModelListItem(
                 Icon(
                     Icons.Filled.Delete,
                     "Delete",
-                    tint = Pal.Red,
+                    tint = PalModelList.Red,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -143,14 +156,14 @@ fun ModelListItem(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            containerColor = Pal.Card,
+            containerColor = PalModelList.Card,
             title = {
-                Text("Delete Model?", color = Pal.Text, fontSize = 16.sp)
+                Text("Delete Model?", color = PalModelList.Text, fontSize = 16.sp)
             },
             text = {
                 Text(
                     "Remove ${model.name} from your device?",
-                    color = Pal.Text2,
+                    color = PalModelList.Text2,
                     fontSize = 14.sp
                 )
             },
@@ -159,12 +172,12 @@ fun ModelListItem(
                     showDeleteConfirm = false
                     onDelete()
                 }) {
-                    Text("Delete", color = Pal.Red)
+                    Text("Delete", color = PalModelList.Red)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("Cancel", color = Pal.Text2)
+                    Text("Cancel", color = PalModelList.Text2)
                 }
             }
         )
