@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         EngineManager.init(this)
+        ModelManager.init(this)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
                 background = Pal.Bg, surface = Pal.Surface,
@@ -123,6 +124,7 @@ fun AppScaffold() {
     var statusText   by remember { mutableStateOf("No model loaded") }
     var showSettings by remember { mutableStateOf(false) }
     var showInfo     by remember { mutableStateOf(false) }
+    var showModelList by remember { mutableStateOf(false) }
     val chat = remember { mutableStateListOf<ChatMessage>() }
 
     // Settings fields
@@ -147,7 +149,7 @@ fun AppScaffold() {
 
     fun applySettings() {
         val nCtxVal = sNCtx.toIntOrNull()?.coerceIn(512, 32768) ?: 8192
-        val maxTokVal = sMaxTok.toIntOrNull()?.coerceIn(64, nCtxVal - 512) ?: min(4096, nCtxVal - 512)
+        val maxTokVal = sMaxTok.toIntOrNull()?.coerceIn(64, nCtxVal - 512) ?: (nCtxVal - 512).coerceAtMost(4096)
         val cfg = InferenceEngine.Config(
             nCtx = nCtxVal,
             nBatch = sBatch.toIntOrNull()?.coerceIn(512, 8192) ?: 2048,
@@ -218,7 +220,18 @@ fun AppScaffold() {
                     val eng = EngineManager.getEngineForFormat(name)
                     eng.setConfig(SettingsManager.toConfig()); eng.setRepeatPenalty(SettingsManager.toRepeatPenaltyConfig()); eng.setSystemPrompt(SettingsManager.systemPrompt)
                     val ok = eng.loadModel(path)
-                    if (ok) modelInfo = eng.getModelInfo()
+                    if (ok) {
+                        modelInfo = eng.getModelInfo()
+                        // Save to model manager after successful load
+                        ModelManager.addModel(ModelManager.Model(
+                            id = "${name}_${System.currentTimeMillis()}",
+                            name = name,
+                            path = path,
+                            format = name.substringAfterLast('.').lowercase(),
+                            engine = eng.engineType,
+                            sizeBytes = File(path).length()
+                        ))
+                    }
                     withContext(Dispatchers.Main) {
                         isLoading = false; modelLoaded = ok; filename = name
                         statusText = if (ok) "${eng.engineName} \u00B7 $name" else "Load failed"
@@ -247,6 +260,9 @@ fun AppScaffold() {
                     if (modelLoaded) {
                         AssistChip(onClick = { showInfo = true }, label = { Text("${kvUsage}%", fontSize = 11.sp) },
                             colors = AssistChipDefaults.assistChipColors(containerColor = if (kvUsage > 80) Pal.Red.copy(alpha = 0.2f) else Pal.Accent2.copy(alpha = 0.15f), labelColor = if (kvUsage > 80) Pal.Red else Pal.Accent2))
+                    }
+                    IconButton(onClick = { showModelList = true }) {
+                        Icon(Icons.Filled.List, "Models", tint = Pal.Text2)
                     }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Outlined.Tune, "Settings", tint = Pal.Text2)
@@ -331,6 +347,46 @@ fun AppScaffold() {
                 benchRes = benchRes, isBenching = isBenching
             )
         }
+    }
+
+    // Model List Dialog
+    if (showModelList) {
+        ModelListDialog(
+            onDismiss = { showModelList = false },
+            onModelSelected = { model ->
+                showModelList = false
+                isLoading = true; statusText = "Loading ${model.name}..."
+                scope.launch(Dispatchers.IO) {
+                    val eng = EngineManager.getEngineForFormat(model.name)
+                    eng.setConfig(SettingsManager.toConfig())
+                    eng.setRepeatPenalty(SettingsManager.toRepeatPenaltyConfig())
+                    eng.setSystemPrompt(SettingsManager.systemPrompt)
+                    val ok = eng.loadModel(model.path)
+                    withContext(Dispatchers.Main) {
+                        isLoading = false
+                        if (ok) {
+                            modelLoaded = true
+                            filename = model.name
+                            ModelManager.markUsed(model.id)
+                            statusText = "${eng.engineName} \u00B7 $filename"
+                        } else {
+                            statusText = "Load failed"
+                        }
+                    }
+                }
+            },
+            onModelDeleted = { id ->
+                ModelManager.deleteModel(id)
+            },
+            onImportClicked = {
+                showModelList = false
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/octet-stream", "*/*"))
+                }
+                filePicker.launch(intent)
+            }
+        )
     }
 
     // Info sheet
