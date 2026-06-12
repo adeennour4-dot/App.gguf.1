@@ -25,7 +25,7 @@ endif()
 # GPU backends
 # Enable locally if SPIRV-Headers and OpenCL SDK are available
 option(GGML_VULKAN "Enable Vulkan GPU backend" OFF)
-option(GGML_OPENCL "Enable OpenCL GPU backend" ON)
+option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)  # Disabled for CI - OpenCL not available at build time
 
 # CPU optimizations
 set(GGML_CPU_KLEIDIAI   OFF CACHE BOOL "" FORCE)  # KleidiAI ARM micro-kernels (disabled — b9474 kernel mismatch)
