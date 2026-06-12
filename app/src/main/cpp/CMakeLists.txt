@@ -88,7 +88,7 @@ set(MNN_SUPPORT_TRANSFORMER_FUSE ON CACHE BOOL "" FORCE)
 set(MNN_ARM82             OFF CACHE BOOL "" FORCE)
 set(MNN_KLEIDIAI          OFF CACHE BOOL "" FORCE)
 set(MNN_SME2              OFF CACHE BOOL "" FORCE)
-set(MNN_OPENCL            ON  CACHE BOOL "" FORCE)
+set(MNN_OPENCL            OFF CACHE BOOL "" FORCE)  # Disabled for CI - no OpenCL SDK available
 set(MNN_VULKAN            OFF CACHE BOOL "" FORCE)
 set(MNN_SEP_BUILD         OFF CACHE BOOL "" FORCE)
 set(MNN_USE_LOGCAT        ON  CACHE BOOL "" FORCE)
