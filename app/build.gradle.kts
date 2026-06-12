@@ -17,9 +17,9 @@ android {
 
         externalNativeBuild {
             cmake {
-                // Performance flags: ThinLTO, ARMv8.6-a with NEON FP16
-                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
-                cFlags  ("-O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
+                // Performance flags: ThinLTO, ARMv8.7-a with NEON FP16, SVE2 for Exynos 2200+
+                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.7-a+dotprod+i8mm+fp16+sve2 -fno-stack-protector")
+                cFlags  ("-O3 -flto=thin -march=armv8.7-a+dotprod+i8mm+fp16+sve2 -fno-stack-protector")
                 arguments(
                     "-DANDROID_STL=c++_shared",
                     "-DGGML_OPENMP=OFF",

@@ -1,6 +1,7 @@
 package com.gguf.ipc
 
 import org.json.JSONObject
+import java.io.File
 
 /**
  * MnnEngine — InferenceEngine implementation using Alibaba MNN-LLM.
@@ -45,12 +46,32 @@ class MnnEngine : InferenceEngine {
     override fun loadModel(path: String): Boolean {
         currentModelPath = path
         return try {
-            isModelLoaded = mnnLoadModel(path)
+            val modelDir = findModelDirectory(path)
+            isModelLoaded = mnnLoadModel(modelDir)
             isModelLoaded
         } catch (e: Exception) {
             android.util.Log.e("MnnEngine", "Failed to load MNN model: ${e.message}")
             false
         }
+    }
+
+    /**
+     * MNN-LLM expects a directory containing config.json and model files.
+     * If a single .mnn file is provided, find its parent directory.
+     */
+    private fun findModelDirectory(path: String): String {
+        val file = File(path)
+        if (file.isDirectory) {
+            // Check if config.json exists
+            if (File(file, "config.json").exists()) return path
+        }
+        // If it's a file, use its parent directory
+        val parent = file.parentFile
+        if (parent != null && File(parent, "config.json").exists()) {
+            return parent.absolutePath
+        }
+        // Fallback: return original path
+        return path
     }
 
     override fun unloadModel() {

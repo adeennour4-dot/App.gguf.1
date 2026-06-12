@@ -114,17 +114,26 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
     g_history.emplace_back("user", std::string(prompt_str));
     env->ReleaseStringUTFChars(prompt, prompt_str);
 
-    std::ostringstream output_stream;
-
-    g_llm->response(g_history, &output_stream, "<eop>", 0);
-
     int max_tokens = 4096;
-    for (int i = 0; i < max_tokens && !g_stop_requested; ++i) {
-        g_llm->generate(1);
-        g_tokens_generated++;
+    int tokens_generated = 0;
+    std::string token_buffer;
 
+    for (int i = 0; i < max_tokens && !g_stop_requested; ++i) {
+        if (g_stop_requested) break;
+        
+        // Generate one token at a time for streaming
+        g_llm->generate(1);
+        tokens_generated = i + 1;
+        g_tokens_generated = tokens_generated;  // Update for polling
+        
         auto* ctx = g_llm->getContext();
         if (ctx != nullptr) {
+            // Check if we have output from generate
+            if (ctx->output_str && strlen(ctx->output_str) > 0) {
+                token_buffer = std::string(ctx->output_str);
+                g_full_response += token_buffer;
+                g_stream_buffer = token_buffer;
+            }
             if (ctx->status == LlmStatus::NORMAL_FINISHED ||
                 ctx->status == LlmStatus::MAX_TOKENS_FINISHED) {
                 break;
@@ -132,11 +141,9 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
         }
     }
 
-    g_full_response = output_stream.str();
-    g_stream_buffer = g_full_response;
     g_history.emplace_back("assistant", g_full_response);
     g_inference_done = true;
-    LOGI("MNN inference done, tokens=%d", g_tokens_generated.load());
+    LOGI("MNN inference done, tokens=%d", tokens_generated);
 }
 
 JNIEXPORT void JNICALL
@@ -172,12 +179,10 @@ Java_com_gguf_ipc_MnnEngine_mnnGetKvCacheUsage(JNIEnv* env, jobject thiz) {
     if (!g_llm || !g_model_loaded) return 0;
     auto* ctx = g_llm->getContext();
     if (ctx == nullptr) return 0;
-    int history_tokens = 0;
-    for (auto& item : g_history) {
-        history_tokens += (int)item.second.size() / 4;
-    }
-    int ctx_size = 8192;
-    return (int)((float)history_tokens / ctx_size * 100.0f);
+    // Use prompt_len + gen_seq_len as token count estimate
+    int used_tokens = ctx->prompt_len + ctx->gen_seq_len;
+    int ctx_size = 8192;  // Default context size
+    return (used_tokens > 0 && ctx_size > 0) ? (int)((float)used_tokens / ctx_size * 100.0f) : 0;
 }
 
 JNIEXPORT void JNICALL

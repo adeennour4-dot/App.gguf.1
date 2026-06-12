@@ -46,6 +46,47 @@ class LiteRtEngine : InferenceEngine {
     override fun loadModel(path: String): Boolean {
         currentModelPath = path
         return try {
+            // Check if it's a .litertlm file (bundle) or .tflite
+            val isLitertlm = path.endsWith(".litertlm", ignoreCase = true)
+            
+            val config = if (isLitertlm) {
+                // For .litertlm bundles, use the bundle path directly
+                EngineConfig(
+                    path,
+                    preferredBackend,
+                    null,  // modelLoader
+                    null,  // tokenizer
+                    null,  // speculative decoding config
+                    null,  // generation config
+                    null   // options
+                )
+            } else {
+                // For .tflite files, try to load with tokenizer
+                EngineConfig(
+                    path,
+                    preferredBackend,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                )
+            }
+            engine = Engine(config)
+            engine!!.initialize()
+            isModelLoaded = true
+            Log.i(TAG, "LiteRT-LM model loaded: $path")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load model: ${e.message}", e)
+            // Try fallback: load as raw TFLite
+            tryLoadAsTflite(path)
+        }
+    }
+
+    private fun tryLoadAsTflite(path: String): Boolean {
+        return try {
+            Log.i(TAG, "Trying fallback TFLite load...")
             val config = EngineConfig(
                 path,
                 preferredBackend,
@@ -58,10 +99,10 @@ class LiteRtEngine : InferenceEngine {
             engine = Engine(config)
             engine!!.initialize()
             isModelLoaded = true
-            Log.i(TAG, "LiteRT-LM model loaded: $path")
+            Log.i(TAG, "LiteRT-LM fallback load succeeded: $path")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load model: ${e.message}", e)
+            Log.e(TAG, "Fallback load also failed: ${e.message}", e)
             false
         }
     }

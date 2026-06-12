@@ -100,7 +100,6 @@ LlamaCppEngine.setConfig() → EngineCore.Config → JNI → C++ EngineConfig
 - **Benchmark**: Only llama.cpp has benchmarkNative; MNN and LiteRT-LM return placeholders
 - **Chat export**: Only llama.cpp implemented
 - **EmbeddingHelper/MultimodalHelper**: Present but unused stubs
-- **No git repo**: No version history
 
 ## [VERIFIABLE GOALS]
 

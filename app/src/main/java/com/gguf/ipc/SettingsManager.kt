@@ -14,6 +14,7 @@ object SettingsManager {
     private object Keys {
         const val N_CTX = "n_ctx"
         const val MAX_TOKENS = "max_tokens"
+        const val N_BATCH = "n_batch"
         const val TEMPERATURE = "temperature"
         const val TOP_P = "top_p"
         const val MIN_P = "min_p"
@@ -61,6 +62,10 @@ object SettingsManager {
         get() = prefs?.getInt(Keys.THREADS, 0) ?: 0
         set(value) = prefs?.edit()?.putInt(Keys.THREADS, value)?.apply() ?: Unit
 
+    var nBatch: Int
+        get() = prefs?.getInt(Keys.N_BATCH, 2048) ?: 2048
+        set(value) = prefs?.edit()?.putInt(Keys.N_BATCH, value)?.apply() ?: Unit
+
     var repeatPenalty: Float
         get() = prefs?.getFloat(Keys.REPEAT_PENALTY, 1.1f) ?: 1.1f
         set(value) = prefs?.edit()?.putFloat(Keys.REPEAT_PENALTY, value)?.apply() ?: Unit
@@ -88,7 +93,8 @@ object SettingsManager {
     fun toConfig(): InferenceEngine.Config {
         return InferenceEngine.Config(
             nCtx = nCtx,
-            maxNewTokens = maxTokens,
+            nBatch = nBatch.coerceIn(512, 8192),
+            maxNewTokens = maxTokens.coerceAtMost(nCtx - 512),
             temperature = temperature,
             topP = topP,
             minP = minP,

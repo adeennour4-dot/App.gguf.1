@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,16 +27,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,8 +40,6 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
-import java.text.SimpleDateFormat
-import java.util.*
 
 // ── Palette ──────────────────────────────────────────────────────────
 private object Pal {
@@ -60,7 +53,6 @@ private object Pal {
     val Red       = Color(0xFFFF4757)
     val Amber     = Color(0xFFFFBE0B)
     val Purple    = Color(0xFFBB86FC)
-    val Teal      = Color(0xFF03DAC6)
     val Text      = Color(0xFFEAEAEE)
     val Text2     = Color(0xFF9898AA)
     val Text3     = Color(0xFF5C5C72)
@@ -144,6 +136,7 @@ fun AppScaffold() {
     var sRepPen    by remember { mutableStateOf(SettingsManager.repeatPenalty.toString()) }
     var sFreqPen   by remember { mutableStateOf(SettingsManager.freqPenalty.toString()) }
     var sPresPen   by remember { mutableStateOf(SettingsManager.presPenalty.toString()) }
+    var sBatch     by remember { mutableStateOf(SettingsManager.nBatch.toString()) }
     var sSysPrompt by remember { mutableStateOf(SettingsManager.systemPrompt) }
     var benchRes   by remember { mutableStateOf("") }
     var isBenching by remember { mutableStateOf(false) }
@@ -153,9 +146,12 @@ fun AppScaffold() {
     }
 
     fun applySettings() {
+        val nCtxVal = sNCtx.toIntOrNull()?.coerceIn(512, 32768) ?: 8192
+        val maxTokVal = sMaxTok.toIntOrNull()?.coerceIn(64, nCtxVal - 512) ?: min(4096, nCtxVal - 512)
         val cfg = InferenceEngine.Config(
-            nCtx = sNCtx.toIntOrNull()?.coerceIn(512, 32768) ?: 8192,
-            maxNewTokens = sMaxTok.toIntOrNull()?.coerceIn(64, 8192) ?: 4096,
+            nCtx = nCtxVal,
+            nBatch = sBatch.toIntOrNull()?.coerceIn(512, 8192) ?: 2048,
+            maxNewTokens = maxTokVal,
             temperature = sTemp.toFloatOrNull()?.coerceIn(0f, 2f) ?: 0.7f,
             topP = sTopP.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.9f,
             minP = sMinP.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.05f,
@@ -167,10 +163,10 @@ fun AppScaffold() {
         engine?.setRepeatPenalty(InferenceEngine.RepeatPenaltyConfig(
             sRepPen.toFloatOrNull() ?: 1.1f, sFreqPen.toFloatOrNull() ?: 0f, sPresPen.toFloatOrNull() ?: 0f
         ))
-        SettingsManager.nCtx = cfg.nCtx; SettingsManager.maxTokens = cfg.maxNewTokens
-        SettingsManager.temperature = cfg.temperature; SettingsManager.topP = cfg.topP
-        SettingsManager.minP = cfg.minP; SettingsManager.gpuLayers = cfg.nGpuLayers
-        SettingsManager.threads = cfg.nThreads
+        SettingsManager.nCtx = cfg.nCtx; SettingsManager.nBatch = cfg.nBatch
+        SettingsManager.maxTokens = cfg.maxNewTokens; SettingsManager.temperature = cfg.temperature
+        SettingsManager.topP = cfg.topP; SettingsManager.minP = cfg.minP
+        SettingsManager.gpuLayers = cfg.nGpuLayers; SettingsManager.threads = cfg.nThreads
         SettingsManager.repeatPenalty = sRepPen.toFloatOrNull() ?: 1.1f
         SettingsManager.freqPenalty = sFreqPen.toFloatOrNull() ?: 0f
         SettingsManager.presPenalty = sPresPen.toFloatOrNull() ?: 0f
@@ -184,7 +180,7 @@ fun AppScaffold() {
         var firstTokenSeen = false
         isProcessing = true
         while (isInferring) {
-            delay(1)
+            delay(30)
             val e = EngineManager.getCurrentEngine() ?: break
             val partial = e.readPartialStream()
             if (partial.isNotEmpty()) {
@@ -322,7 +318,7 @@ fun AppScaffold() {
             SettingsContent(sNCtx, { sNCtx = it }, sMaxTok, { sMaxTok = it }, sTemp, { sTemp = it },
                 sTopP, { sTopP = it }, sMinP, { sMinP = it }, sGpu, { sGpu = it }, sThreads, { sThreads = it },
                 sRepPen, { sRepPen = it }, sFreqPen, { sFreqPen = it }, sPresPen, { sPresPen = it },
-                sSysPrompt, { sSysPrompt = it }, onApply = { applySettings(); showSettings = false },
+                sBatch, { sBatch = it }, sSysPrompt, { sSysPrompt = it }, onApply = { applySettings(); showSettings = false },
                 onAutoDetect = {
                     val info = EngineManager.getDeviceInfo()
                     if (info != null) { SettingsManager.applyToDeviceDefaults(info); sNCtx = SettingsManager.nCtx.toString(); sGpu = SettingsManager.gpuLayers.toString(); sThreads = SettingsManager.threads.toString() }
@@ -474,7 +470,6 @@ fun StreamingBubble(text: String, processing: Boolean = false) {
         return
     }
     val thinking = remember(text) { text.contains("<think>") && !text.contains("</think>") }
-    val dots = rememberInfiniteTransition(label = "d").animateFloat(0f, 3f, infiniteRepeatable(tween(1200)), label = "d")
 
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         Box(modifier = Modifier.size(24.dp).clip(RoundedCornerShape(7.dp)).background(Pal.Accent), contentAlignment = Alignment.Center) {
@@ -509,9 +504,6 @@ fun StreamingBubble(text: String, processing: Boolean = false) {
                     } else {
                         Text(text, color = Pal.Text, fontSize = 14.sp, lineHeight = 20.sp)
                     }
-                    Spacer(Modifier.width(2.dp))
-                    Box(modifier = Modifier.padding(top = 2.dp).size(6.dp).clip(CircleShape).background(Pal.Accent).alpha(0.6f))
-                }
             }
         }
     }
@@ -565,6 +557,7 @@ fun SettingsContent(
     minP: String, onMinP: (String) -> Unit, gpu: String, onGpu: (String) -> Unit,
     threads: String, onThreads: (String) -> Unit, repPen: String, onRepPen: (String) -> Unit,
     freqPen: String, onFreqPen: (String) -> Unit, presPen: String, onPresPen: (String) -> Unit,
+    sBatchVal: String, onBatch: (String) -> Unit,
     sysPrompt: String, onSysPrompt: (String) -> Unit,
     onApply: () -> Unit, onAutoDetect: () -> Unit, onUnload: () -> Unit, onReset: () -> Unit,
     benchRes: String, isBenching: Boolean
@@ -584,6 +577,7 @@ fun SettingsContent(
         SettingField("Temperature", "0-2", temp, onTemp)
         SettingField("Top-P", "0-1", topP, onTopP)
         SettingField("Min-P", "0-1", minP, onMinP)
+        SettingField("Batch Size", "512-8192", sBatchVal, onBatch)
         SettingField("Repeat Penalty", "1.0=off", repPen, onRepPen)
         SettingField("Freq Penalty", "0=off", freqPen, onFreqPen)
         SettingField("Presence Penalty", "0=off", presPen, onPresPen)

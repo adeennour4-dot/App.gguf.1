@@ -10,10 +10,10 @@ include(FetchContent)
 # ---------------------------------------------------------------------------
 # Android-optimized ARM CPU flags
 # ---------------------------------------------------------------------------
-# Target armv8.6-a with dotprod, i8mm, fp16 — covers most modern Android SoCs
-# (Snapdragon 8 Gen 2+, Dimensity 9200+, Exynos 2200+)
+# Target armv8.7-a with dotprod, i8mm, fp16, sve2 — covers modern Android SoCs
+# (Snapdragon 8 Gen 2+, Dimensity 9200+, Exynos 2200+, Tensor G3+)
 if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(ARM_ARCH_FLAGS "-march=armv8.6-a+dotprod+i8mm+fp16")
+    set(ARM_ARCH_FLAGS "-march=armv8.7-a+dotprod+i8mm+fp16+sve2")
     set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   ${ARM_ARCH_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARM_ARCH_FLAGS}")
 endif()
@@ -23,10 +23,9 @@ endif()
 # ---------------------------------------------------------------------------
 
 # GPU backends
-# Disabled in CI due to missing SPIRV-Headers and OpenCL libs
 # Enable locally if SPIRV-Headers and OpenCL SDK are available
 option(GGML_VULKAN "Enable Vulkan GPU backend" OFF)
-option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)
+option(GGML_OPENCL "Enable OpenCL GPU backend" ON)
 
 # CPU optimizations
 set(GGML_CPU_KLEIDIAI   OFF CACHE BOOL "" FORCE)  # KleidiAI ARM micro-kernels (disabled — b9474 kernel mismatch)
@@ -37,6 +36,17 @@ set(GGML_BACKEND_DL    OFF CACHE BOOL "" FORCE)   # static linking, no dynamic b
 set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_FLASH_ATTN ON CACHE BOOL "" FORCE)
+
+# ---------------------------------------------------------------------------
+# Fetch OpenCL Headers (for Adreno GPU support)
+# ---------------------------------------------------------------------------
+FetchContent_Declare(
+    opencl_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-Headers.git
+    GIT_TAG        v2023.12.14
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(opencl_headers)
 
 # ---------------------------------------------------------------------------
 # Fetch llama.cpp — pinned to stable release b9474 (2026-06-02)
@@ -78,7 +88,7 @@ set(MNN_SUPPORT_TRANSFORMER_FUSE ON CACHE BOOL "" FORCE)
 set(MNN_ARM82             OFF CACHE BOOL "" FORCE)
 set(MNN_KLEIDIAI          OFF CACHE BOOL "" FORCE)
 set(MNN_SME2              OFF CACHE BOOL "" FORCE)
-set(MNN_OPENCL            OFF CACHE BOOL "" FORCE)
+set(MNN_OPENCL            ON  CACHE BOOL "" FORCE)
 set(MNN_VULKAN            OFF CACHE BOOL "" FORCE)
 set(MNN_SEP_BUILD         OFF CACHE BOOL "" FORCE)
 set(MNN_USE_LOGCAT        ON  CACHE BOOL "" FORCE)
@@ -150,10 +160,17 @@ target_link_libraries(mnn-bridge
 )
 
 # ---------------------------------------------------------------------------
-# OpenCL linking
+# OpenCL linking (for Adreno GPU)
 # ---------------------------------------------------------------------------
-if(GGML_OPENCL)
+find_library(OPENCL_LIB OpenCL)
+if(GGML_OPENCL AND OPENCL_LIB)
+    target_include_directories(ipc-bridge PRIVATE ${opencl_headers_SOURCE_DIR})
     target_compile_definitions(ipc-bridge PRIVATE GGML_OPENCL_ENABLED)
+    # Link against OpenCL ICD loader (provided by Android)
+    target_link_libraries(ipc-bridge PRIVATE ${OPENCL_LIB})
+    message(STATUS "OpenCL enabled for ipc-bridge: ${OPENCL_LIB}")
+elseif(GGML_OPENCL)
+    message(WARNING "OpenCL library not found - GPU acceleration on Adreno will be disabled")
 endif()
 
 target_compile_features(ipc-bridge PRIVATE cxx_std_17)
