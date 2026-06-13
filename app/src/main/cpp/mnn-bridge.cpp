@@ -8,6 +8,7 @@
 #include <mutex>
 #include <chrono>
 #include <thread>
+#include <exception>
 #include <android/log.h>
 
 #define LOG_TAG "MnnBridge"
@@ -176,7 +177,7 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
         g_llm->response(full_prompt, &oss);
         g_full_response = oss.str();
         g_stream_buffer = g_full_response;
-    } catch (e: Exception) {
+    } catch (const std::exception& e) {
         LOGE("MNN inference exception: %s", e.what());
         g_stream_buffer = "Error: inference failed";
         g_full_response = g_stream_buffer;
