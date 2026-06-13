@@ -30,7 +30,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
-        android:theme="@style/Theme.GGUFZeroCopyV6"
+        android:theme="@style/Theme.GGUFZeroCopyV7"
         android:hardwareAccelerated="true"
         android:largeHeap="true">
 

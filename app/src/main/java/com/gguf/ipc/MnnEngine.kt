@@ -2,13 +2,12 @@ package com.gguf.ipc
 
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * MnnEngine — InferenceEngine implementation using Alibaba MNN-LLM.
- * Supports .mnn models with CPU (8.6x faster than llama.cpp) and OpenCL GPU backends.
- *
- * Uses MNN-LLM C API via JNI bridge.
- * License: Apache 2.0 (allows commercial use)
+ * Supports .mnn models with CPU-optimized backend.
  */
 class MnnEngine : InferenceEngine {
 
@@ -18,19 +17,33 @@ class MnnEngine : InferenceEngine {
         private set
 
     private var currentModelPath = ""
+    private var kvCacheUsage = 0
 
     companion object {
+        private const val TAG = "MnnEngine"
+
         init {
             try {
                 System.loadLibrary("mnn-bridge")
             } catch (e: UnsatisfiedLinkError) {
-                android.util.Log.e("MnnEngine", "MNN native library not available: ${e.message}")
+                android.util.Log.e(TAG, "MNN native library not available: ${e.message}")
             }
         }
     }
 
-    // Native JNI methods (implemented in mnn-bridge.cpp)
+    // Streaming state
+    private val partialStream = StringBuilder()
+    private val fullResponse = StringBuilder()
+    private val inferenceDone = AtomicBoolean(true)
+    private val tokensGenerated = AtomicInteger(0)
+    private var inferenceJob: Thread? = null
+
+    // Native JNI methods
     private external fun mnnLoadModel(path: String): Boolean
+    private external fun mnnUnloadModel()
+    private external fun mnnSetConfig(nCtx: Int, nBatch: Int, maxTokens: Int, temperature: Float, topP: Float, minP: Float)
+    private external fun mnnSetRepeatPenalty(repeatPenalty: Float, freqPenalty: Float, presPenalty: Float)
+    private external fun mnnSetSystemPrompt(prompt: String)
     private external fun mnnExecuteInference(prompt: String)
     private external fun mnnAbortInference()
     private external fun mnnReadPartialStream(): String
@@ -45,12 +58,18 @@ class MnnEngine : InferenceEngine {
 
     override fun loadModel(path: String): Boolean {
         currentModelPath = path
+        val modelDir = findModelDirectory(path)
         return try {
-            val modelDir = findModelDirectory(path)
-            isModelLoaded = mnnLoadModel(modelDir)
-            isModelLoaded
+            val success = mnnLoadModel(modelDir)
+            isModelLoaded = success
+            if (success) {
+                android.util.Log.i(TAG, "MNN model loaded: $modelDir")
+            } else {
+                android.util.Log.e(TAG, "MNN model load failed: $modelDir")
+            }
+            success
         } catch (e: Exception) {
-            android.util.Log.e("MnnEngine", "Failed to load MNN model: ${e.message}")
+            android.util.Log.e(TAG, "Failed to load MNN model: ${e.message}", e)
             false
         }
     }
@@ -62,103 +81,98 @@ class MnnEngine : InferenceEngine {
     private fun findModelDirectory(path: String): String {
         val file = File(path)
         if (file.isDirectory) {
-            // Check if config.json exists
             if (File(file, "config.json").exists()) return path
         }
-        // If it's a file, use its parent directory
         val parent = file.parentFile
         if (parent != null && File(parent, "config.json").exists()) {
             return parent.absolutePath
         }
-        // Fallback: return original path
         return path
     }
 
     override fun unloadModel() {
-        try {
-            mnnResetContext()
-        } catch (_: Exception) {}
+        mnnUnloadModel()
         isModelLoaded = false
         currentModelPath = ""
     }
 
     override fun setConfig(config: InferenceEngine.Config) {
-        android.util.Log.i("MnnEngine", "Config: ctx=${config.nCtx}, maxTokens=${config.maxNewTokens}")
-        // TODO: Apply config to MNN engine via JNI
+        mnnSetConfig(
+            config.nCtx,
+            config.nBatch,
+            config.maxNewTokens,
+            config.temperature,
+            config.topP,
+            config.minP
+        )
     }
 
     override fun setRepeatPenalty(config: InferenceEngine.RepeatPenaltyConfig) {
-        android.util.Log.i("MnnEngine", "Repeat penalty: ${config.repeatPenalty}")
-        // TODO: Apply repeat penalty via JNI
+        mnnSetRepeatPenalty(config.repeatPenalty, config.freqPenalty, config.presPenalty)
     }
 
     override fun setSystemPrompt(prompt: String) {
-        android.util.Log.i("MnnEngine", "System prompt set")
-        // TODO: Apply system prompt via JNI
+        mnnSetSystemPrompt(prompt)
     }
 
     override fun executeInference(prompt: String) {
-        try {
-            mnnExecuteInference(prompt)
-        } catch (e: Exception) {
-            android.util.Log.e("MnnEngine", "Inference failed: ${e.message}")
+        // Reset streaming state
+        synchronized(partialStream) {
+            partialStream.clear()
+            fullResponse.clear()
         }
+        inferenceDone.set(false)
+        tokensGenerated.set(0)
+
+        // Run inference in background thread for proper streaming
+        inferenceJob = Thread {
+            try {
+                mnnExecuteInference(prompt)
+                val finalResponse = mnnReadTokenStream()
+                synchronized(partialStream) {
+                    fullResponse.append(finalResponse)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Inference thread error: ${e.message}", e)
+            }
+            inferenceDone.set(true)
+        }
+        inferenceJob?.start()
     }
 
     override fun abortInference() {
-        try {
-            mnnAbortInference()
-        } catch (e: Exception) {
-            android.util.Log.e("MnnEngine", "Abort failed: ${e.message}")
-        }
+        mnnAbortInference()
     }
 
     override fun readPartialStream(): String {
-        return try {
-            mnnReadPartialStream()
-        } catch (e: Exception) {
-            ""
+        val partial = mnnReadPartialStream()
+        if (partial.isNotEmpty()) {
+            synchronized(partialStream) {
+                partialStream.append(partial)
+            }
         }
+        return partial
     }
 
     override fun readTokenStream(): String {
-        return try {
-            mnnReadTokenStream()
-        } catch (e: Exception) {
-            ""
-        }
+        return synchronized(partialStream) { fullResponse.toString() }
     }
 
-    override fun isInferenceDone(): Boolean {
-        return try {
-            mnnIsInferenceDone()
-        } catch (e: Exception) {
-            true
-        }
-    }
+    override fun isInferenceDone(): Boolean = inferenceDone.get()
 
-    override fun getTokensGenerated(): Int {
-        return try {
-            mnnGetTokensGenerated()
-        } catch (e: Exception) {
-            0
-        }
-    }
+    override fun getTokensGenerated(): Int = tokensGenerated.get()
 
-    override fun getKvCacheUsage(): Int {
-        return try {
-            mnnGetKvCacheUsage()
-        } catch (e: Exception) {
-            0
-        }
-    }
+    override fun getKvCacheUsage(): Int = kvCacheUsage
 
     override fun resetContext() {
-        try {
-            mnnResetContext()
-        } catch (e: Exception) {
-            android.util.Log.e("MnnEngine", "Reset failed: ${e.message}")
+        mnnResetContext()
+        synchronized(partialStream) {
+            partialStream.clear()
+            fullResponse.clear()
         }
+        inferenceDone.set(true)
+        tokensGenerated.set(0)
+        kvCacheUsage = 0
     }
 
     override fun getModelInfo(): JSONObject {
@@ -186,6 +200,8 @@ class MnnEngine : InferenceEngine {
     }
 
     override fun supportsFormat(filePath: String): Boolean {
-        return filePath.endsWith(".mnn", ignoreCase = true)
+        return filePath.endsWith(".mnn", ignoreCase = true) ||
+               filePath.endsWith(".tflite", ignoreCase = true) ||
+               filePath.endsWith(".litertlm", ignoreCase = true)
     }
 }

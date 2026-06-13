@@ -44,24 +44,23 @@ import java.io.InputStream
 
 // ── Palette ──────────────────────────────────────────────────────────
 private object Pal {
-    val Bg        = Color(0xFF0A0A0F)
-    val Surface   = Color(0xFF141420)
-    val Card      = Color(0xFF1A1A2E)
-    val CardLight = Color(0xFF22223A)
-    val Border    = Color(0xFF2A2A40)
-    val Accent    = Color(0xFF6C63FF)
-    val Accent2   = Color(0xFF00D9A6)
-    val Red       = Color(0xFFFF4757)
-    val Amber     = Color(0xFFFFBE0B)
-    val Purple    = Color(0xFFBB86FC)
-    val Text      = Color(0xFFEAEAEE)
-    val Text2     = Color(0xFF9898AA)
-    val Text3     = Color(0xFF5C5C72)
-    val UserBg    = Color(0xFF2D2B55)
-    val BotBg     = Color(0xFF1A1A2E)
-    val ThinkBg   = Color(0xFF1E1A33)
-    val GradientStart = Color(0xFF6C63FF)
-    val GradientEnd   = Color(0xFF00D9A6)
+    val Bg = UiConstants.Pal.Bg
+    val Surface = UiConstants.Pal.Surface
+    val Card = UiConstants.Pal.Card
+    val CardLight = UiConstants.Pal.CardLight
+    val Border = UiConstants.Pal.Border
+    val Accent = UiConstants.Pal.Accent
+    val Accent2 = UiConstants.Pal.Accent2
+    val Red = UiConstants.Pal.Red
+    val Amber = UiConstants.Pal.Amber
+    val Purple = UiConstants.Pal.Purple
+    val Text = UiConstants.Pal.Text
+    val Text2 = UiConstants.Pal.Text2
+    val Text3 = UiConstants.Pal.Text3
+    val UserBg = UiConstants.Pal.UserBg
+    val ThinkBg = UiConstants.Pal.ThinkBg
+    val GradientStart = UiConstants.Pal.GradientStart
+    val GradientEnd = UiConstants.Pal.GradientEnd
 }
 
 // ── Data ─────────────────────────────────────────────────────────────
@@ -176,31 +175,56 @@ fun AppScaffold() {
         SettingsManager.systemPrompt = sSysPrompt
     }
 
-    // Polling stream
+    // Polling stream - adaptive delay for performance
     LaunchedEffect(isInferring) {
         if (!isInferring) return@LaunchedEffect
         val start = System.currentTimeMillis()
         var firstTokenSeen = false
+        var lastTokenCount = 0
         isProcessing = true
+
         while (isInferring) {
-            delay(30)
+            // Adaptive delay: faster when tokens streaming, slower during prompt eval
+            val delayMs = if (isProcessing) 50L else 25L
+            delay(delayMs)
+
             val e = EngineManager.getCurrentEngine() ?: break
             val partial = e.readPartialStream()
+            val currentTokens = e.getTokensGenerated()
+
             if (partial.isNotEmpty()) {
                 streamedText = partial
-                if (!firstTokenSeen) { firstTokenSeen = true; isProcessing = false }
+                if (!firstTokenSeen) {
+                    firstTokenSeen = true
+                    isProcessing = false
+                }
             }
+
+            // Update TPS when tokens are being generated
             val elapsed = (System.currentTimeMillis() - start) / 1000f
-            val tok = e.getTokensGenerated()
-            if (elapsed > 0) tps = tok / elapsed
+            if (elapsed > 0 && currentTokens > lastTokenCount) {
+                tps = currentTokens / elapsed
+                lastTokenCount = currentTokens
+            }
+
             kvUsage = e.getKvCacheUsage()
+
             if (e.isInferenceDone()) {
                 delay(60)
                 val final = e.readTokenStream()
                 val ft = e.getTokensGenerated()
                 totalTokens += ft
-                if (final.isNotEmpty()) chat.add(ChatMessage(Role.ASSISTANT, final, tps = if (elapsed > 0) ft / elapsed else 0f, tokens = ft))
-                streamedText = ""; isInferring = false; isProcessing = false
+                if (final.isNotEmpty()) {
+                    chat.add(ChatMessage(
+                        Role.ASSISTANT,
+                        final,
+                        tps = if (elapsed > 0) ft / elapsed else 0f,
+                        tokens = ft
+                    ))
+                }
+                streamedText = ""
+                isInferring = false
+                isProcessing = false
             }
         }
     }
@@ -724,7 +748,7 @@ fun InfoContent(modelInfo: JSONObject?, filename: String, totalTokens: Int) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text("Performance", fontSize = 12.sp, color = Pal.Accent2, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
-                Text("\u2022 Big core pinning (sched_setaffinity)\n\u2022 Priority boost (-20)\n\u2022 RAM lock (mlockall)\n\u2022 ThinLTO + armv8.7a\n\u2022 Flash attention enabled",
+                Text("\u2022 Big core pinning (sched_setaffinity)\n\u2022 Priority boost (-20)\n\u2022 RAM lock (mlockall)\n\u2022 ThinLTO + armv8.6-a\n\u2022 Flash attention enabled",
                     fontSize = 11.sp, color = Pal.Text2, lineHeight = 16.sp)
             }
         }

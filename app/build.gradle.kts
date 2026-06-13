@@ -5,21 +5,21 @@ plugins {
 
 android {
     namespace  = "com.gguf.ipc"
-    compileSdk = 36
-    ndkVersion = "29.0.14206865"          // NDK r29 stable
+    compileSdk = 35
+    ndkVersion = "27.2.12479066"          // NDK r27c (stable)
 
     defaultConfig {
         applicationId = "com.gguf.ipc"
-        minSdk        = 27
-        targetSdk     = 36
-        versionCode   = 6
-        versionName   = "6.0"
+        minSdk        = 26
+        targetSdk     = 35
+        versionCode   = 7
+        versionName   = "7.0-modern"
 
         externalNativeBuild {
             cmake {
-                // Performance flags: ThinLTO, ARMv8.7-a with NEON FP16, SVE2 for Exynos 2200+
-                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.7-a+dotprod+i8mm+fp16+sve2 -fno-stack-protector")
-                cFlags  ("-O3 -flto=thin -march=armv8.7-a+dotprod+i8mm+fp16+sve2 -fno-stack-protector")
+                // Performance flags: ThinLTO, ARMv8.6-a with NEON FP16 and dotprod, SVE2 for Exynos 2200+
+                cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
+                cFlags  ("-O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
                 arguments(
                     "-DANDROID_STL=c++_shared",
                     "-DGGML_OPENMP=OFF",

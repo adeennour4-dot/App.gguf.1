@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project("gguf_zerocopy_engine_v6" CXX C)
+project("gguf_zerocopy_engine_v7" CXX C)
 
 # Force C++17 for all targets
 set(CMAKE_CXX_STANDARD 17)
@@ -10,10 +10,11 @@ include(FetchContent)
 # ---------------------------------------------------------------------------
 # Android-optimized ARM CPU flags
 # ---------------------------------------------------------------------------
-# Target armv8.7-a with dotprod, i8mm, fp16, sve2 — covers modern Android SoCs
+# Target armv8.6-a with dotprod, i8mm, fp16 — covers modern Android SoCs
 # (Snapdragon 8 Gen 2+, Dimensity 9200+, Exynos 2200+, Tensor G3+)
+# NOTE: armv8.7-a+sve2 may have compatibility issues on some devices
 if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(ARM_ARCH_FLAGS "-march=armv8.7-a+dotprod+i8mm+fp16+sve2")
+    set(ARM_ARCH_FLAGS "-march=armv8.6-a+dotprod+i8mm+fp16")
     set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   ${ARM_ARCH_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARM_ARCH_FLAGS}")
 endif()

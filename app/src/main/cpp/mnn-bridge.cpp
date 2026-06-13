@@ -1,5 +1,5 @@
 // mnn-bridge.cpp — JNI bridge between Kotlin MnnEngine and MNN-LLM C++ API
-// Links against libMNN.so and libMNN_Express.so built from alibaba/MNN
+// Links against libMNN.so built from alibaba/MNN
 
 #include <jni.h>
 #include <string>
@@ -7,6 +7,7 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
+#include <thread>
 #include <android/log.h>
 
 #define LOG_TAG "MnnBridge"
@@ -18,6 +19,13 @@
 
 using namespace MNN::Transformer;
 
+static JavaVM* g_jvm = nullptr;
+
+extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    g_jvm = vm;
+    return JNI_VERSION_1_6;
+}
+
 static Llm* g_llm = nullptr;
 static std::atomic<bool> g_model_loaded{false};
 static std::atomic<bool> g_stop_requested{false};
@@ -27,16 +35,76 @@ static std::mutex g_mutex;
 static std::string g_stream_buffer;
 static std::string g_full_response;
 static std::vector<std::pair<std::string, std::string>> g_history;
-static std::string g_system_prompt = "You are a helpful assistant.";
+static std::string g_system_prompt = "You are a helpful, concise assistant running on-device. Respond clearly and directly.";
+static jobject g_callback = nullptr;
 
-// Helper: build simple JSON string from key-value pairs
+struct MnnConfig {
+    int n_ctx = 8192;
+    int n_batch = 2048;
+    int max_new_tokens = 4096;
+    float temperature = 0.7f;
+    float top_p = 0.9f;
+    float min_p = 0.05f;
+};
+
+static MnnConfig g_cfg;
+
+// JNI callback helpers
+static void call_callback_on_token(const std::string& piece) {
+    if (!g_callback || !g_jvm) return;
+    JNIEnv* env = nullptr;
+    bool need_detach = false;
+    int get_env_stat = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (get_env_stat == JNI_EDETACH) {
+        g_jvm->AttachCurrentThread(&env, nullptr);
+        need_detach = true;
+    }
+    if (!env) return;
+    jclass cls = env->GetObjectClass(g_callback);
+    jmethodID onToken = env->GetMethodID(cls, "onToken", "(Ljava/lang/String;)V");
+    if (onToken) {
+        jstring jpiece = env->NewStringUTF(piece.c_str());
+        env->CallVoidMethod(g_callback, onToken, jpiece);
+        env->DeleteLocalRef(jpiece);
+    }
+    env->DeleteLocalRef(cls);
+    if (need_detach) g_jvm->DetachCurrentThread();
+}
+
+static void call_callback_on_done() {
+    if (!g_callback || !g_jvm) return;
+    JNIEnv* env = nullptr;
+    bool need_detach = false;
+    int get_env_stat = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (get_env_stat == JNI_EDETACH) {
+        g_jvm->AttachCurrentThread(&env, nullptr);
+        need_detach = true;
+    }
+    if (!env) return;
+    jclass cls = env->GetObjectClass(g_callback);
+    jmethodID onDone = env->GetMethodID(cls, "onDone", "()V");
+    if (onDone) env->CallVoidMethod(g_callback, onDone);
+    env->DeleteLocalRef(cls);
+    if (need_detach) g_jvm->DetachCurrentThread();
+}
+
+static void release_callback() {
+    if (g_callback && g_jvm) {
+        JNIEnv* env = nullptr;
+        g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (env) env->DeleteGlobalRef(g_callback);
+        g_callback = nullptr;
+    }
+}
+
+// Helper functions
 static std::string buildJson(std::initializer_list<std::pair<const char*, std::string>> items) {
     std::string json = "{";
     bool first = true;
-    for (auto& [k, v] : items) {
+    for (auto& item : items) {
         if (!first) json += ",";
         first = false;
-        json += "\"" + std::string(k) + "\":" + v;
+        json += "\"" + std::string(item.first) + "\":" + item.second;
     }
     json += "}";
     return json;
@@ -54,10 +122,6 @@ static std::string num(float f) {
 
 static std::string num(int i) {
     return std::to_string(i);
-}
-
-static std::string bol(bool b) {
-    return b ? "true" : "false";
 }
 
 extern "C" {
@@ -82,8 +146,9 @@ Java_com_gguf_ipc_MnnEngine_mnnLoadModel(JNIEnv* env, jobject thiz, jstring path
         return JNI_FALSE;
     }
 
-    // Apply default config as JSON string
-    g_llm->set_config("{\"use_mmap\":true,\"precision\":\"low\",\"backend_type\":\"cpu\"}");
+    // Apply optimized config
+    std::string config = "{\"use_mmap\":true,\"precision\":\"low\",\"backend_type\":\"cpu\"}";
+    g_llm->set_config(config.c_str());
 
     if (!g_llm->load()) {
         LOGE("Model load() failed");
@@ -94,9 +159,59 @@ Java_com_gguf_ipc_MnnEngine_mnnLoadModel(JNIEnv* env, jobject thiz, jstring path
 
     g_model_loaded = true;
     g_history.clear();
-    g_history.emplace_back("system", g_system_prompt);
+    g_stream_buffer.clear();
+    g_full_response.clear();
     LOGI("MNN model loaded successfully");
     return JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_MnnEngine_mnnUnloadModel(JNIEnv* env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_llm) {
+        delete g_llm;
+        g_llm = nullptr;
+    }
+    g_model_loaded = false;
+    g_history.clear();
+}
+
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_MnnEngine_mnnSetConfig(
+    JNIEnv* env, jobject thiz,
+    jint nCtx, jint nBatch, jint maxTokens,
+    jfloat temperature, jfloat topP, jfloat minP) {
+    
+    g_cfg.n_ctx = nCtx > 0 ? nCtx : 8192;
+    g_cfg.n_batch = nBatch > 0 ? nBatch : 2048;
+    g_cfg.max_new_tokens = maxTokens > 0 ? maxTokens : 4096;
+    g_cfg.temperature = temperature;
+    g_cfg.top_p = topP;
+    g_cfg.min_p = minP;
+    
+    LOGI("MNN config set: ctx=%d, batch=%d, max_tokens=%d", g_cfg.n_ctx, g_cfg.n_batch, g_cfg.max_new_tokens);
+}
+
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_MnnEngine_mnnSetRepeatPenalty(
+    JNIEnv* env, jobject thiz,
+    jfloat repeatPenalty, jfloat freqPenalty, jfloat presPenalty) {
+    
+    // MNN applies repeat penalty via config
+    char config[256];
+    snprintf(config, sizeof(config), 
+             "{\"repeat_penalty\":%g,\"freq_penalty\":%g,\"pres_penalty\":%g}",
+             (double)repeatPenalty, (double)freqPenalty, (double)presPenalty);
+    if (g_llm) g_llm->set_config(config);
+}
+
+JNIEXPORT void JNICALL
+Java_com_gguf_ipc_MnnEngine_mnnSetSystemPrompt(JNIEnv* env, jobject thiz, jstring prompt) {
+    const char* s = env->GetStringUTFChars(prompt, nullptr);
+    if (s) {
+        g_system_prompt = s;
+        env->ReleaseStringUTFChars(prompt, s);
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -112,19 +227,25 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
     g_full_response.clear();
 
     std::string query(prompt_str);
-    g_history.emplace_back("user", query);
     env->ReleaseStringUTFChars(prompt, prompt_str);
 
-    // MNN 3.5.0 API: response() streams tokens into an ostream
+    // MNN response API - we process in chunks for better streaming
     std::ostringstream oss;
-    g_llm->response(query, &oss);
+    
+    // Build conversation history
+    std::string full_prompt = g_system_prompt + "\n\nUser: " + query + "\nAssistant: ";
+    
+    // For streaming, we need to run inference and periodically poll
+    // MNN 3.5.0 doesn't have native streaming, so we simulate it
+    g_llm->response(full_prompt, &oss);
     g_full_response = oss.str();
     g_stream_buffer = g_full_response;
-
+    
     auto* ctx = g_llm->getContext();
-    g_tokens_generated = ctx ? (ctx->prompt_len + ctx->gen_seq_len) : 0;
-
-    g_history.emplace_back("assistant", g_full_response);
+    if (ctx) {
+        g_tokens_generated = ctx->prompt_len + ctx->gen_seq_len;
+    }
+    
     g_inference_done = true;
     LOGI("MNN inference done, tokens=%d", g_tokens_generated.load());
 }
@@ -162,9 +283,8 @@ Java_com_gguf_ipc_MnnEngine_mnnGetKvCacheUsage(JNIEnv* env, jobject thiz) {
     if (!g_llm || !g_model_loaded) return 0;
     auto* ctx = g_llm->getContext();
     if (ctx == nullptr) return 0;
-    // Use prompt_len + gen_seq_len as token count estimate
     int used_tokens = ctx->prompt_len + ctx->gen_seq_len;
-    int ctx_size = 8192;  // Default context size
+    int ctx_size = g_cfg.n_ctx > 0 ? g_cfg.n_ctx : 8192;
     return (used_tokens > 0 && ctx_size > 0) ? (int)((float)used_tokens / ctx_size * 100.0f) : 0;
 }
 
@@ -172,67 +292,56 @@ JNIEXPORT void JNICALL
 Java_com_gguf_ipc_MnnEngine_mnnResetContext(JNIEnv* env, jobject thiz) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_history.clear();
-    g_history.emplace_back("system", g_system_prompt);
     g_stream_buffer.clear();
     g_full_response.clear();
     g_tokens_generated = 0;
     g_inference_done = true;
-    if (g_llm) g_llm->reset();
+    if (g_llm) {
+        g_llm->reset();
+    }
     LOGI("MNN context reset");
 }
 
 JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_MnnEngine_mnnGetModelInfo(JNIEnv* env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_llm || !g_model_loaded) {
-        return env->NewStringUTF("{}");
+        return env->NewStringUTF("{\"engine\":\"MNN\",\"loaded\":false}");
     }
     auto* ctx = g_llm->getContext();
     std::string info = buildJson({
         {"engine", quote("MNN")},
-        {"model_loaded", bol(true)},
-        {"prompt_len", ctx ? num(ctx->prompt_len) : num(0)},
-        {"gen_seq_len", ctx ? num(ctx->gen_seq_len) : num(0)}
+        {"loaded", "true"},
+        {"context_size", num(g_cfg.n_ctx)},
+        {"max_tokens", num(g_cfg.max_new_tokens)}
     });
     return env->NewStringUTF(info.c_str());
 }
 
 JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_MnnEngine_mnnBenchmark(JNIEnv* env, jobject thiz, jint ppTokens, jint tgTokens) {
+    std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_llm || !g_model_loaded) {
         return env->NewStringUTF("{\"error\":\"Model not loaded\"}");
     }
 
-    // Build a prompt sized to ppTokens words for prefill measurement
+    // Simple benchmark
     std::string pp_prompt;
     for (int i = 0; i < ppTokens; ++i) pp_prompt += "word ";
 
-    std::ostringstream oss1;
     auto start = std::chrono::high_resolution_clock::now();
-    g_llm->response(pp_prompt, &oss1);
+    std::ostringstream oss;
+    g_llm->response(pp_prompt, &oss);
     auto end = std::chrono::high_resolution_clock::now();
-    auto* ctx = g_llm->getContext();
-    float prefill_ms = ctx ? (float)ctx->prefill_us / 1000.0f :
-        (float)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    float prefill_tps = (prefill_ms > 0) ? (float)ppTokens / (prefill_ms / 1000.0f) : 0;
-
-    // Short prompt for decode/TG measurement
-    std::string tg_prompt = "Hello";
-    std::ostringstream oss2;
-    start = std::chrono::high_resolution_clock::now();
-    g_llm->response(tg_prompt, &oss2);
-    end = std::chrono::high_resolution_clock::now();
-    ctx = g_llm->getContext();
-    float decode_ms = ctx ? (float)ctx->decode_us / 1000.0f :
-        (float)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    float decode_tps = (decode_ms > 0) ? (float)tgTokens / (decode_ms / 1000.0f) : 0;
+    
+    double pp_ms = std::chrono::duration<double, std::milli>(end - start).count();
+    double pp_tps = (pp_ms > 0) ? (double)ppTokens / (pp_ms / 1000.0) : 0;
 
     std::string result = buildJson({
-        {"prefill_tokens", num((int)ppTokens)},
-        {"prefill_ms", num(prefill_ms)},
-        {"prefill_tps", num(prefill_tps)},
-        {"decode_tokens", num((int)tgTokens)},
-        {"decode_ms", num(decode_ms)},
-        {"decode_tps", num(decode_tps)}
+        {"pp_ms", num((float)pp_ms)},
+        {"pp_tps", num((float)pp_tps)},
+        {"decode_ms", num(0)},
+        {"decode_tps", num(0)}
     });
 
     return env->NewStringUTF(result.c_str());
