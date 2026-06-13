@@ -263,7 +263,7 @@ fun AppScaffold() {
                             colors = AssistChipDefaults.assistChipColors(containerColor = if (kvUsage > 80) Pal.Red.copy(alpha = 0.2f) else Pal.Accent2.copy(alpha = 0.15f), labelColor = if (kvUsage > 80) Pal.Red else Pal.Accent2))
                     }
                     IconButton(onClick = { showModelList = true }) {
-                        Icon(Icons.AutoMirrored.Filled.List, "Models", tint = Pal.Text2)
+                        Icon(Icons.Outlined.List, "Models", tint = Pal.Text2)
                     }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Outlined.Tune, "Settings", tint = Pal.Text2)
