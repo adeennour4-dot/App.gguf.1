@@ -111,39 +111,24 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
     g_stream_buffer.clear();
     g_full_response.clear();
 
-    g_history.emplace_back("user", std::string(prompt_str));
+    std::string query(prompt_str);
+    g_history.emplace_back("user", query);
     env->ReleaseStringUTFChars(prompt, prompt_str);
 
-    int max_tokens = 4096;
-    int tokens_generated = 0;
-    std::string token_buffer;
-
-    for (int i = 0; i < max_tokens && !g_stop_requested; ++i) {
-        if (g_stop_requested) break;
-        
-        // Generate one token at a time for streaming
-        g_llm->generate(1);
-        tokens_generated = i + 1;
-        g_tokens_generated = tokens_generated;  // Update for polling
-        
-        auto* ctx = g_llm->getContext();
-        if (ctx != nullptr) {
-            // Check if we have output from generate
-            if (ctx->output_str && strlen(ctx->output_str) > 0) {
-                token_buffer = std::string(ctx->output_str);
-                g_full_response += token_buffer;
-                g_stream_buffer = token_buffer;
-            }
-            if (ctx->status == LlmStatus::NORMAL_FINISHED ||
-                ctx->status == LlmStatus::MAX_TOKENS_FINISHED) {
-                break;
-            }
-        }
+    // MNN 3.5.0 API: response() streams tokens into an ostream
+    std::ostringstream oss;
+    g_full_response = g_llm->response(query, &oss);
+    if (g_full_response.empty()) {
+        g_full_response = oss.str();
     }
+    g_stream_buffer = g_full_response;
+
+    auto* ctx = g_llm->getContext();
+    g_tokens_generated = ctx ? (ctx->prompt_len + ctx->gen_seq_len) : 0;
 
     g_history.emplace_back("assistant", g_full_response);
     g_inference_done = true;
-    LOGI("MNN inference done, tokens=%d", tokens_generated);
+    LOGI("MNN inference done, tokens=%d", g_tokens_generated.load());
 }
 
 JNIEXPORT void JNICALL
