@@ -55,7 +55,7 @@ static void call_callback_on_token(const std::string& piece) {
     JNIEnv* env = nullptr;
     bool need_detach = false;
     int get_env_stat = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
-    if (get_env_stat == JNI_EDETACH) {
+    if (get_env_stat == JNI_EDETACHED) {
         g_jvm->AttachCurrentThread(&env, nullptr);
         need_detach = true;
     }
@@ -76,7 +76,7 @@ static void call_callback_on_done() {
     JNIEnv* env = nullptr;
     bool need_detach = false;
     int get_env_stat = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
-    if (get_env_stat == JNI_EDETACH) {
+    if (get_env_stat == JNI_EDETACHED) {
         g_jvm->AttachCurrentThread(&env, nullptr);
         need_detach = true;
     }
