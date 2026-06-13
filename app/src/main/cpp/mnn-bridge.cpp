@@ -117,10 +117,8 @@ Java_com_gguf_ipc_MnnEngine_mnnExecuteInference(JNIEnv* env, jobject thiz, jstri
 
     // MNN 3.5.0 API: response() streams tokens into an ostream
     std::ostringstream oss;
-    g_full_response = g_llm->response(query, &oss);
-    if (g_full_response.empty()) {
-        g_full_response = oss.str();
-    }
+    g_llm->response(query, &oss);
+    g_full_response = oss.str();
     g_stream_buffer = g_full_response;
 
     auto* ctx = g_llm->getContext();
