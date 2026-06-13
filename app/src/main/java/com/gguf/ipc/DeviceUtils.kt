@@ -79,30 +79,31 @@ object DeviceUtils {
      * Suggest optimal configuration based on device.
      */
     fun suggestConfig(deviceInfo: DeviceInfo, modelSizeB: Float = 7f): InferenceEngine.Config {
+        // FIX: Use only big cores for threads, not all cores
         val suggestedThreads = if (deviceInfo.bigCores.isNotEmpty()) {
-            deviceInfo.bigCores.size.coerceAtMost(4)
+            deviceInfo.bigCores.size.coerceAtMost(4).coerceAtLeast(1)
         } else {
             (deviceInfo.cpuCores / 2).coerceIn(1, 4)
         }
 
         val suggestedGpuLayers = when {
-            deviceInfo.isSnapdragon -> 99   // OpenCL works well on Adreno
-            deviceInfo.isMediaTek -> 0     // Mali OpenCL often slower than CPU
-            deviceInfo.isExynos -> 99      // Xclipse 920 Vulkan works on Exynos 2200+
-            deviceInfo.isTensor -> 0       // Mali Vulkan varies
-            else -> 0                      // Unknown GPU, be conservative
+            deviceInfo.isSnapdragon -> 99
+            deviceInfo.isMediaTek -> 0
+            deviceInfo.isExynos -> 99
+            deviceInfo.isTensor -> 0
+            else -> 0
         }
 
-        // Context size based on available RAM and model size
-        val estimatedModelRAM = modelSizeB * 1024 * 0.6f // Rough estimate: 60% of model params in MB
+        val estimatedModelRAM = modelSizeB * 1024 * 0.6f
         val availableForContext = (deviceInfo.availableRamMB - estimatedModelRAM).coerceAtLeast(512f)
         val suggestedCtx = when {
             modelSizeB <= 1f -> 8192
             modelSizeB <= 3f -> 4096
             modelSizeB <= 7f -> 2048
             else -> 1024
-        }.coerceAtMost((availableForContext * 2).toInt()) // ~0.5 bytes per token in Q4_K_M KV cache
-            .coerceAtLeast(2048)                          // Never go below 2K — RAM guard handles OOM
+        }.coerceAtMost((availableForContext * 2).toInt())
+            .coerceAtLeast(2048)
+            .coerceAtMost(32768)
 
         return InferenceEngine.Config(
             nCtx = suggestedCtx,
@@ -111,7 +112,7 @@ object DeviceUtils {
             topP = 0.9f,
             minP = 0.05f,
             nGpuLayers = suggestedGpuLayers,
-            nThreads = 0,  // 0 = auto (all cores)
+            nThreads = suggestedThreads,  // FIX: Use big core count, not 0 (all cores)
             seed = -1
         )
     }

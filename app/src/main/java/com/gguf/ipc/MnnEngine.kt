@@ -21,7 +21,6 @@ class MnnEngine : InferenceEngine {
 
     companion object {
         private const val TAG = "MnnEngine"
-
         init {
             try {
                 System.loadLibrary("mnn-bridge")
@@ -31,12 +30,10 @@ class MnnEngine : InferenceEngine {
         }
     }
 
-    // Streaming state
     private val partialStream = StringBuilder()
     private val fullResponse = StringBuilder()
     private val inferenceDone = AtomicBoolean(true)
     private val tokensGenerated = AtomicInteger(0)
-    private var inferenceJob: Thread? = null
 
     // Native JNI methods
     private external fun mnnLoadModel(path: String): Boolean
@@ -62,11 +59,8 @@ class MnnEngine : InferenceEngine {
         return try {
             val success = mnnLoadModel(modelDir)
             isModelLoaded = success
-            if (success) {
-                android.util.Log.i(TAG, "MNN model loaded: $modelDir")
-            } else {
-                android.util.Log.e(TAG, "MNN model load failed: $modelDir")
-            }
+            if (success) android.util.Log.i(TAG, "MNN model loaded: $modelDir")
+            else android.util.Log.e(TAG, "MNN model load failed: $modelDir")
             success
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Failed to load MNN model: ${e.message}", e)
@@ -74,10 +68,6 @@ class MnnEngine : InferenceEngine {
         }
     }
 
-    /**
-     * MNN-LLM expects a directory containing config.json and model files.
-     * If a single .mnn file is provided, find its parent directory.
-     */
     private fun findModelDirectory(path: String): String {
         val file = File(path)
         if (file.isDirectory) {
@@ -91,32 +81,30 @@ class MnnEngine : InferenceEngine {
     }
 
     override fun unloadModel() {
-        mnnUnloadModel()
+        try { mnnUnloadModel() } catch (_: Exception) {}
         isModelLoaded = false
         currentModelPath = ""
+        partialStream.clear()
+        fullResponse.clear()
+        inferenceDone.set(true)
+        tokensGenerated.set(0)
     }
 
     override fun setConfig(config: InferenceEngine.Config) {
-        mnnSetConfig(
-            config.nCtx,
-            config.nBatch,
-            config.maxNewTokens,
-            config.temperature,
-            config.topP,
-            config.minP
-        )
+        try {
+            mnnSetConfig(config.nCtx, config.nBatch, config.maxNewTokens, config.temperature, config.topP, config.minP)
+        } catch (_: Exception) {}
     }
 
     override fun setRepeatPenalty(config: InferenceEngine.RepeatPenaltyConfig) {
-        mnnSetRepeatPenalty(config.repeatPenalty, config.freqPenalty, config.presPenalty)
+        try { mnnSetRepeatPenalty(config.repeatPenalty, config.freqPenalty, config.presPenalty) } catch (_: Exception) {}
     }
 
     override fun setSystemPrompt(prompt: String) {
-        mnnSetSystemPrompt(prompt)
+        try { mnnSetSystemPrompt(prompt) } catch (_: Exception) {}
     }
 
     override fun executeInference(prompt: String) {
-        // Reset streaming state
         synchronized(partialStream) {
             partialStream.clear()
             fullResponse.clear()
@@ -124,34 +112,31 @@ class MnnEngine : InferenceEngine {
         inferenceDone.set(false)
         tokensGenerated.set(0)
 
-        // Run inference in background thread for proper streaming
-        inferenceJob = Thread {
-            try {
-                mnnExecuteInference(prompt)
-                val finalResponse = mnnReadTokenStream()
-                synchronized(partialStream) {
-                    fullResponse.append(finalResponse)
-                }
-            } catch (e: Exception) {
-                android.util.Log.e(TAG, "Inference thread error: ${e.message}", e)
+        try {
+            mnnExecuteInference(prompt)
+            // MNN is synchronous - read result after completion
+            val result = mnnReadTokenStream()
+            synchronized(partialStream) {
+                fullResponse.append(result)
+                partialStream.append(result)
             }
-            inferenceDone.set(true)
+            tokensGenerated.set(mnnGetTokensGenerated())
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "MNN inference error: ${e.message}", e)
         }
-        inferenceJob?.start()
+        inferenceDone.set(true)
     }
 
     override fun abortInference() {
-        mnnAbortInference()
+        try { mnnAbortInference() } catch (_: Exception) {}
     }
 
     override fun readPartialStream(): String {
-        val partial = mnnReadPartialStream()
-        if (partial.isNotEmpty()) {
-            synchronized(partialStream) {
-                partialStream.append(partial)
-            }
+        return synchronized(partialStream) {
+            val s = partialStream.toString()
+            partialStream.clear()
+            s
         }
-        return partial
     }
 
     override fun readTokenStream(): String {
@@ -165,7 +150,7 @@ class MnnEngine : InferenceEngine {
     override fun getKvCacheUsage(): Int = kvCacheUsage
 
     override fun resetContext() {
-        mnnResetContext()
+        try { mnnResetContext() } catch (_: Exception) {}
         synchronized(partialStream) {
             partialStream.clear()
             fullResponse.clear()
@@ -176,27 +161,18 @@ class MnnEngine : InferenceEngine {
     }
 
     override fun getModelInfo(): JSONObject {
-        return try {
-            JSONObject(mnnGetModelInfo())
-        } catch (e: Exception) {
-            JSONObject().put("error", "Failed to get MNN model info")
-        }
+        return try { JSONObject(mnnGetModelInfo()) }
+        catch (e: Exception) { JSONObject().put("error", "Failed to get MNN model info") }
     }
 
     override fun benchmark(ppTokens: Int, tgTokens: Int): JSONObject {
-        return try {
-            JSONObject(mnnBenchmark(ppTokens, tgTokens))
-        } catch (e: Exception) {
-            JSONObject().put("error", "MNN benchmark failed")
-        }
+        return try { JSONObject(mnnBenchmark(ppTokens, tgTokens)) }
+        catch (e: Exception) { JSONObject().put("error", "MNN benchmark failed") }
     }
 
     override fun exportChatHistory(): String {
-        return try {
-            mnnExportChatHistory()
-        } catch (e: Exception) {
-            "MNN chat export not available"
-        }
+        return try { mnnExportChatHistory() }
+        catch (e: Exception) { "MNN chat export not available" }
     }
 
     override fun supportsFormat(filePath: String): Boolean {

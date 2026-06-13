@@ -18,7 +18,7 @@ class LlamaCppEngine : InferenceEngine {
         private const val TAG = "LlamaCppEngine"
     }
 
-    // Callback-managed state
+    // Callback-managed state - updated from C++ JNI callbacks
     private val partialStream = StringBuilder()
     private val fullResponse = StringBuilder()
     private val inferenceDone = AtomicBoolean(true)
@@ -28,6 +28,12 @@ class LlamaCppEngine : InferenceEngine {
         currentModelPath = path
         val success = EngineCore.loadModel(path)
         isModelLoaded = success
+        if (success) {
+            // Apply current config after model load
+            setConfig(SettingsManager.toConfig())
+            setRepeatPenalty(SettingsManager.toRepeatPenaltyConfig())
+            setSystemPrompt(SettingsManager.systemPrompt)
+        }
         return success
     }
 
@@ -35,6 +41,11 @@ class LlamaCppEngine : InferenceEngine {
         EngineCore.resetContextNative()
         isModelLoaded = false
         currentModelPath = ""
+        partialStream.clear()
+        fullResponse.clear()
+        inferenceDone.set(true)
+        tokensGenerated.set(0)
+        kvCacheUsage = 0
     }
 
     override fun setConfig(config: InferenceEngine.Config) {
@@ -64,25 +75,23 @@ class LlamaCppEngine : InferenceEngine {
     }
 
     override fun executeInference(prompt: String) {
-        synchronized(partialStream) {
-            partialStream.clear()
-            fullResponse.clear()
-        }
+        partialStream.clear()
+        fullResponse.clear()
         inferenceDone.set(false)
         tokensGenerated.set(0)
+        kvCacheUsage = 0
 
         val cb = object : EngineCore.TokenCallback {
             override fun onToken(token: String) {
-                synchronized(partialStream) {
-                    partialStream.append(token)
-                    fullResponse.append(token)
-                }
+                partialStream.append(token)
+                fullResponse.append(token)
             }
             override fun onDone() {
                 inferenceDone.set(true)
             }
             override fun onError(error: String) {
                 android.util.Log.e(TAG, "Inference error: $error")
+                partialStream.append("\n[Error: $error]")
                 inferenceDone.set(true)
             }
             override fun onKvCacheUsage(percent: Int) {
@@ -109,7 +118,7 @@ class LlamaCppEngine : InferenceEngine {
     }
 
     override fun readTokenStream(): String {
-        return synchronized(partialStream) { fullResponse.toString() }
+        return fullResponse.toString()
     }
 
     override fun isInferenceDone(): Boolean = inferenceDone.get()
@@ -120,30 +129,26 @@ class LlamaCppEngine : InferenceEngine {
 
     override fun resetContext() {
         EngineCore.resetContextNative()
-        synchronized(partialStream) { partialStream.clear(); fullResponse.clear() }
+        partialStream.clear()
+        fullResponse.clear()
         inferenceDone.set(true)
         tokensGenerated.set(0)
         kvCacheUsage = 0
     }
 
     override fun getModelInfo(): JSONObject {
-        return try {
-            JSONObject(EngineCore.getModelInfoNative())
-        } catch (e: Exception) {
-            JSONObject().put("error", "Failed to get model info")
-        }
+        return try { JSONObject(EngineCore.getModelInfoNative()) }
+        catch (e: Exception) { JSONObject().put("error", "Failed to get model info") }
     }
 
     override fun benchmark(ppTokens: Int, tgTokens: Int): JSONObject {
-        return try {
-            JSONObject(EngineCore.benchmarkNative(ppTokens, tgTokens))
-        } catch (e: Exception) {
-            JSONObject().put("error", "Benchmark failed")
-        }
+        return try { JSONObject(EngineCore.benchmarkNative(ppTokens, tgTokens)) }
+        catch (e: Exception) { JSONObject().put("error", "Benchmark failed") }
     }
 
     override fun exportChatHistory(): String {
-        return EngineCore.exportChatHistoryNative()
+        return try { EngineCore.exportChatHistoryNative() }
+        catch (e: Exception) { "Export failed" }
     }
 
     override fun supportsFormat(filePath: String): Boolean {

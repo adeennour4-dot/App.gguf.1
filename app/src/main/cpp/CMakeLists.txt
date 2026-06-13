@@ -14,9 +14,8 @@ include(FetchContent)
 # (Snapdragon 8 Gen 2+, Dimensity 9200+, Exynos 2200+, Tensor G3+)
 # NOTE: armv8.7-a+sve2 may have compatibility issues on some devices
 if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(ARM_ARCH_FLAGS "-march=armv8.6-a+dotprod+i8mm+fp16")
-    set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   ${ARM_ARCH_FLAGS}")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARM_ARCH_FLAGS}")
+    # ARM arch flags are passed from build.gradle.kts cppFlags/cFlags
+    # Do not set them here to avoid duplication
 endif()
 
 # ---------------------------------------------------------------------------

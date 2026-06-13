@@ -20,12 +20,11 @@
 
 #include "llama.h"
 
-#define LOG_TAG "GGUF_Engine_v6"
+#define LOG_TAG "GGUF_Engine_v7"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// JVM reference for JNI callbacks
 static JavaVM* g_jvm = nullptr;
 
 extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
@@ -33,10 +32,10 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     return JNI_VERSION_1_6;
 }
 
-// Runtime configuration
 struct EngineConfig {
     int      n_ctx          = 8192;
     int      n_batch        = 2048;
+    int      n_ubatch       = 512;   // FIX: smaller micro-batch for chunked prefill
     int      n_threads      = 4;
     int      n_gpu_layers   = 99;
     int      max_new_tokens = 4096;
@@ -53,27 +52,25 @@ struct EngineConfig {
 };
 
 // Global state
-    static llama_model*   g_model       = nullptr;
-    static llama_context* g_ctx         = nullptr;
-    static llama_sampler* g_sampler     = nullptr;
-    static EngineConfig   g_cfg;
-    static std::atomic<bool> g_abort    { false };
-    static bool           g_backend_initialized = false;
-    static jobject        g_callback    = nullptr;
+static llama_model*   g_model       = nullptr;
+static llama_context* g_ctx         = nullptr;
+static llama_sampler* g_sampler     = nullptr;
+static EngineConfig   g_cfg;
+static std::atomic<bool> g_abort    { false };
+static bool           g_backend_initialized = false;
+static jobject        g_callback    = nullptr;
 
 struct Message { std::string role; std::string content; };
 static std::vector<Message> g_history;
-
-// Tokens currently represented (in order, contiguous positions 0..N-1) in
-// the KV cache, as of the last successful prompt decode. Used to avoid
-// re-prefilling the whole conversation on every turn.
 static std::vector<llama_token> g_cached_tokens;
 
-// Big core helpers
+// ── Big core helpers ─────────────────────────────────────────────────
 static std::vector<int> detect_big_cores() {
     std::vector<int> big_cores;
     std::vector<std::pair<int, int>> core_freqs;
-    for (int cpu = 0; cpu < 8; cpu++) {
+    int cpuCount = (int)std::thread::hardware_concurrency();
+    if (cpuCount < 1) cpuCount = 8;
+    for (int cpu = 0; cpu < cpuCount; cpu++) {
         char path[128];
         snprintf(path, sizeof(path),
                  "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
@@ -85,7 +82,10 @@ static std::vector<int> detect_big_cores() {
             fclose(f);
         }
     }
-    if (core_freqs.empty()) return big_cores;
+    if (core_freqs.empty()) {
+        for (int i = 0; i < cpuCount; i++) big_cores.push_back(i);
+        return big_cores;
+    }
     int max_freq = 0;
     for (auto& [id, freq] : core_freqs)
         if (freq > max_freq) max_freq = freq;
@@ -95,6 +95,11 @@ static std::vector<int> detect_big_cores() {
     if (big_cores.empty())
         for (auto& [id, freq] : core_freqs) big_cores.push_back(id);
     return big_cores;
+}
+
+static int get_big_core_count() {
+    auto cores = detect_big_cores();
+    return (int)cores.size();
 }
 
 static void pin_to_big_cores() {
@@ -107,8 +112,6 @@ static void pin_to_big_cores() {
     pid_t tid = syscall(SYS_gettid);
     if (sched_setaffinity(tid, sizeof(cpuset), &cpuset) == 0)
         LOGI("Pinned to %zu big cores", big_cores.size());
-    else
-        LOGI("sched_setaffinity failed (non-fatal)");
 #endif
 }
 
@@ -127,16 +130,11 @@ static void pin_to_all_cores() {
 static void boost_process_priority() {
     if (setpriority(PRIO_PROCESS, 0, -20) == 0)
         LOGI("Process priority boosted to -20");
-    else
-        LOGI("setpriority failed (non-fatal, may need root)");
 }
 
 static void lock_pages_in_ram() {
 #ifdef __aarch64__
-    if (mlockall(MCL_CURRENT | MCL_FUTURE) == 0)
-        LOGI("mlockall: all pages locked in RAM");
-    else
-        LOGI("mlockall failed (non-fatal, may need CAP_IPC_LOCK)");
+    mlockall(MCL_CURRENT | MCL_FUTURE);
 #endif
 }
 
@@ -178,7 +176,7 @@ static std::string build_chat_prompt() {
     return std::string(buf.data(), n > 0 ? n : 0);
 }
 
-// JNI callback helpers
+// ── JNI callback helpers ─────────────────────────────────────────────
 static void call_callback_on_token(const std::string& piece) {
     if (!g_callback || !g_jvm) return;
     JNIEnv* env = nullptr;
@@ -281,7 +279,7 @@ static void release_callback() {
     }
 }
 
-// JNI — setEngineConfigNative
+// ── JNI: setEngineConfigNative ───────────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_setEngineConfigNative(
         JNIEnv*, jobject,
@@ -289,16 +287,25 @@ Java_com_gguf_ipc_EngineCore_setEngineConfigNative(
         jfloat topP, jfloat minP, jint nGpuLayers, jint nThreads, jint seed) {
     g_cfg.n_ctx          = nCtx;
     g_cfg.n_batch        = (nBatch > 0) ? nBatch : 2048;
+    g_cfg.n_ubatch       = 512;  // Always use small micro-batch for chunked prefill
     g_cfg.max_new_tokens = maxNewTokens;
     g_cfg.temperature    = temp;
     g_cfg.top_p          = topP;
     g_cfg.min_p          = minP;
     g_cfg.n_gpu_layers   = nGpuLayers;
-    g_cfg.n_threads      = (nThreads > 0) ? nThreads : 4;
-    g_cfg.seed           = (seed < 0) ? LLAMA_DEFAULT_SEED : (uint32_t)seed;
+    // FIX: clamp threads to big core count, not all cores
+    int bigCores = get_big_core_count();
+    if (nThreads > 0) {
+        g_cfg.n_threads = std::min(nThreads, bigCores);
+    } else {
+        g_cfg.n_threads = bigCores;
+    }
+    g_cfg.seed = (seed < 0) ? LLAMA_DEFAULT_SEED : (uint32_t)seed;
+    LOGI("Config: ctx=%d batch=%d ubatch=%d threads=%d/%d gpu_layers=%d",
+         g_cfg.n_ctx, g_cfg.n_batch, g_cfg.n_ubatch, g_cfg.n_threads, bigCores, g_cfg.n_gpu_layers);
 }
 
-// JNI — setRepeatPenaltyNative
+// ── JNI: setRepeatPenaltyNative ──────────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_setRepeatPenaltyNative(
         JNIEnv*, jobject,
@@ -309,14 +316,14 @@ Java_com_gguf_ipc_EngineCore_setRepeatPenaltyNative(
     if (g_ctx) rebuild_sampler();
 }
 
-// JNI — setSystemPromptNative
+// ── JNI: setSystemPromptNative ───────────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_setSystemPromptNative(JNIEnv* env, jobject, jstring prompt) {
     const char* s = env->GetStringUTFChars(prompt, nullptr);
     if (s) { g_cfg.system_prompt = s; env->ReleaseStringUTFChars(prompt, s); }
 }
 
-// JNI — resetContextNative
+// ── JNI: resetContextNative ──────────────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_resetContextNative(JNIEnv*, jobject) {
     g_history.clear();
@@ -325,7 +332,7 @@ Java_com_gguf_ipc_EngineCore_resetContextNative(JNIEnv*, jobject) {
     LOGI("Context reset.");
 }
 
-// JNI — loadGgufModelNative
+// ── JNI: loadGgufModelNative ─────────────────────────────────────────
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring path) {
     const char* filePath = env->GetStringUTFChars(path, nullptr);
@@ -350,15 +357,14 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     env->ReleaseStringUTFChars(path, filePath);
     if (!g_model) { LOGE("Failed to load model"); return JNI_FALSE; }
 
-    int total_cores = (int)std::thread::hardware_concurrency();
-    if (total_cores < 1) total_cores = 4;
-
-    int n_threads = (g_cfg.n_threads > 0) ? std::min(g_cfg.n_threads, total_cores) : total_cores;
+    int bigCores = get_big_core_count();
+    int n_threads = (g_cfg.n_threads > 0) ? std::min(g_cfg.n_threads, bigCores) : bigCores;
+    if (n_threads < 1) n_threads = 1;
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx           = g_cfg.n_ctx;
     cparams.n_batch         = g_cfg.n_batch;
-    cparams.n_ubatch        = g_cfg.n_batch;  // CRITICAL: Set uBatch = batch for fast prefill (default 512 is too slow)
+    cparams.n_ubatch        = g_cfg.n_ubatch;  // Use small micro-batch for chunked prefill
     cparams.n_threads       = n_threads;
     cparams.n_threads_batch = n_threads;
 
@@ -369,28 +375,15 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
         return JNI_FALSE;
     }
 
-    // Verify GPU backend initialization
-    int n_gpu_layers_loaded = 0;
-    // Note: llama_model_n_gpu_layers not available in b9474; check via context
-    if (g_ctx) {
-        // If GPU layers were requested and context created, assume success
-        n_gpu_layers_loaded = (g_cfg.n_gpu_layers > 0) ? g_cfg.n_gpu_layers : 0;
-    }
-    if (n_gpu_layers_loaded == 0 && g_cfg.n_gpu_layers > 0) {
-        LOGW("GPU layers requested (%d) but 0 loaded — GPU backend may not be available", g_cfg.n_gpu_layers);
-    } else if (n_gpu_layers_loaded > 0) {
-        LOGI("GPU acceleration ENABLED: %d layers offloaded", n_gpu_layers_loaded);
-    }
-
     rebuild_sampler();
     apply_performance_optimizations();
 
-    LOGI("Model loaded OK. n_ctx=%d requested_gpu_layers=%d actual_gpu_layers=%d threads=%d (total_cores=%d)",
-         g_cfg.n_ctx, g_cfg.n_gpu_layers, n_gpu_layers_loaded, n_threads, total_cores);
+    LOGI("Model loaded OK. n_ctx=%d threads=%d/%d gpu_layers=%d",
+         g_cfg.n_ctx, n_threads, bigCores, g_cfg.n_gpu_layers);
     return JNI_TRUE;
 }
 
-// JNI — getModelInfoNative
+// ── JNI: getModelInfoNative ──────────────────────────────────────────
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_EngineCore_getModelInfoNative(JNIEnv* env, jobject) {
     if (!g_model) return env->NewStringUTF("{\"error\":\"no model loaded\"}");
@@ -411,7 +404,7 @@ Java_com_gguf_ipc_EngineCore_getModelInfoNative(JNIEnv* env, jobject) {
     return env->NewStringUTF(j.str().c_str());
 }
 
-// JNI — benchmarkNative
+// ── JNI: benchmarkNative ─────────────────────────────────────────────
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens, jint tgTokens) {
     if (!g_model || !g_ctx) return env->NewStringUTF("{\"error\":\"no model loaded\"}");
@@ -459,11 +452,11 @@ Java_com_gguf_ipc_EngineCore_benchmarkNative(JNIEnv* env, jobject, jint ppTokens
     return env->NewStringUTF(result);
 }
 
-// JNI — exportChatHistoryNative
+// ── JNI: exportChatHistoryNative ─────────────────────────────────────
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_gguf_ipc_EngineCore_exportChatHistoryNative(JNIEnv* env, jobject) {
     std::ostringstream out;
-    out << "=== GGUF ZeroCopy v6 Chat Export ===\n";
+    out << "=== GGUF ZeroCopy v7 Chat Export ===\n";
     for (size_t i = 0; i < g_history.size(); i++) {
         out << "\n[" << (i + 1) << "] " << g_history[i].role << ":\n";
         out << g_history[i].content << "\n";
@@ -471,7 +464,7 @@ Java_com_gguf_ipc_EngineCore_exportChatHistoryNative(JNIEnv* env, jobject) {
     return env->NewStringUTF(out.str().c_str());
 }
 
-// JNI — getKvCacheUsageNative
+// ── JNI: getKvCacheUsageNative ───────────────────────────────────────
 extern "C" JNIEXPORT jint JNICALL
 Java_com_gguf_ipc_EngineCore_getKvCacheUsageNative(JNIEnv*, jobject) {
     if (!g_ctx) return 0;
@@ -482,15 +475,14 @@ Java_com_gguf_ipc_EngineCore_getKvCacheUsageNative(JNIEnv*, jobject) {
     return (int)((used * 100LL) / total);
 }
 
-// JNI — abortInferenceNative
+// ── JNI: abortInferenceNative ────────────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_abortInferenceNative(JNIEnv*, jobject) {
     g_abort.store(true);
     LOGI("Inference abort requested.");
 }
 
-// JNI — executeWithCallbackNative
-// Replaces executeZeroCopyInference + shared memory with JNI callback per token
+// ── JNI: executeWithCallbackNative ───────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz, jstring jprompt, jobject callback) {
     if (!g_model || !g_ctx || !g_sampler) {
@@ -514,21 +506,16 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
         return;
     }
 
-    // Store callback as global ref
     if (g_callback) release_callback();
     g_callback = env->NewGlobalRef(callback);
-
     g_abort.store(false);
 
-    // Add user message to history
     g_history.push_back({"user", std::string(user_input)});
     env->ReleaseStringUTFChars(jprompt, user_input);
 
-    // Build prompt via chat template
     std::string prompt = build_chat_prompt();
     LOGI("Prompt len=%zu", prompt.size());
 
-    // Tokenize
     int n_max  = (int)llama_model_n_ctx_train(g_model);
     std::vector<llama_token> tokens(n_max);
     int n_toks = llama_tokenize(llama_model_get_vocab(g_model),
@@ -543,12 +530,7 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
     }
     tokens.resize(n_toks);
 
-    // --- Prompt-cache reuse -------------------------------------------------
-    // Find how much of the new prompt (system + history + new message) is
-    // already sitting in the KV cache from previous turns, and only decode
-    // the new tail. Without this, every turn re-prefills the ENTIRE
-    // conversation from token 0 (and even duplicates it on top of the
-    // existing cache), making prefill cost grow with conversation length.
+    // Prompt-cache reuse
     llama_pos cur_max = llama_memory_seq_pos_max(get_mem(), 0);
     int n_cached = (cur_max >= 0) ? (int)(cur_max + 1) : 0;
 
@@ -560,15 +542,12 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
     }
 
     if (common_prefix < (size_t)n_cached) {
-        // Drop the divergent tail from the KV cache; it belongs to an
-        // earlier/different conversation state.
         llama_memory_seq_rm(get_mem(), 0, (llama_pos)common_prefix, -1);
         n_cached = (int)common_prefix;
     }
 
     int n_new = n_toks - (int)common_prefix;
 
-    // Context shift if the cached prefix + new tokens would overflow n_ctx
     bool shifted = false;
     if (n_cached + n_new >= g_cfg.n_ctx) {
         int keep      = g_cfg.n_ctx / 4;
@@ -584,22 +563,48 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
 
     LOGI("Prompt tokens=%d, reused_from_cache=%zu, new=%d", n_toks, common_prefix, n_new);
 
-    // Prompt evaluation — all cores for parallel processing
+    // ── FIX: Chunked prefill ─────────────────────────────────────────
+    // Process prompt in small batches instead of one massive decode call.
+    // This allows tokens to start streaming much faster.
     pin_to_all_cores();
+
     if (n_new > 0) {
-        llama_batch batch = llama_batch_get_one(tokens.data() + common_prefix, n_new);
-        if (llama_decode(g_ctx, batch) != 0) {
-            LOGE("llama_decode (prompt) failed");
-            g_cached_tokens.clear();
-            call_callback_on_error("Prompt decode failed");
-            release_callback();
-            return;
+        const int CHUNK_SIZE = g_cfg.n_ubatch;  // 512 tokens per chunk
+        int tokens_decoded = 0;
+
+        while (tokens_decoded < n_new) {
+            if (g_abort.load()) {
+                LOGI("Prefill aborted at chunk %d/%d", tokens_decoded, n_new);
+                break;
+            }
+
+            int chunk_end = std::min(tokens_decoded + CHUNK_SIZE, n_new);
+            int chunk_len = chunk_end - tokens_decoded;
+
+            llama_batch batch = llama_batch_get_one(
+                tokens.data() + common_prefix + tokens_decoded, chunk_len);
+
+            if (llama_decode(g_ctx, batch) != 0) {
+                LOGE("llama_decode (prompt chunk) failed at %d/%d", tokens_decoded, n_new);
+                g_cached_tokens.clear();
+                call_callback_on_error("Prompt decode failed");
+                release_callback();
+                return;
+            }
+
+            tokens_decoded = chunk_end;
+
+            // Report progress during prefill
+            llama_pos max_pos = llama_memory_seq_pos_max(get_mem(), 0);
+            int used = (max_pos >= 0) ? (int)(max_pos + 1) : 0;
+            int pct = (g_cfg.n_ctx > 0) ? (int)((used * 100LL) / g_cfg.n_ctx) : 0;
+            call_callback_on_kv_cache(pct);
+
+            LOGI("Prefill chunk: %d/%d tokens (%d%%)", tokens_decoded, n_new,
+                 (tokens_decoded * 100) / n_new);
         }
     }
 
-    // Remember what's now in the KV cache for next turn's prefix match.
-    // After a context shift, positions no longer map 1:1 onto `tokens`,
-    // so fall back to full reprocessing on the next turn.
     g_cached_tokens = shifted ? std::vector<llama_token>() : tokens;
 
     // Report KV cache usage after prompt eval
@@ -610,11 +615,12 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
         call_callback_on_kv_cache(pct);
     }
 
-    // Generation loop — big cores for single-thread performance
+    // ── Generation loop ──────────────────────────────────────────────
     pin_to_big_cores();
     std::string response;
     int tokens_generated = 0;
     std::vector<llama_token> gen_tokens;
+
     for (int i = 0; i < g_cfg.max_new_tokens; i++) {
         if (g_abort.load()) { LOGI("Inference aborted at token %d", i); break; }
 
@@ -627,8 +633,6 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
             piece[n] = '\0';
             response += piece;
             tokens_generated = i + 1;
-
-            // JNI callback per token
             call_callback_on_token(std::string(piece, n));
             call_callback_on_tokens_generated(tokens_generated);
         }
@@ -637,7 +641,6 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
         if (llama_decode(g_ctx, nb) != 0) break;
         gen_tokens.push_back(tok);
 
-        // Report KV cache every 16 tokens
         if ((i & 0xF) == 0) {
             llama_pos max_pos = llama_memory_seq_pos_max(get_mem(), 0);
             int used = (max_pos >= 0) ? (int)(max_pos + 1) : 0;
@@ -646,22 +649,12 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
         }
     }
 
-    // Extend the prompt-cache record with the tokens we just generated,
-    // so next turn's prefix match also covers this assistant reply
-    // (re-tokenizing the chat-templated history typically reproduces the
-    // same token IDs; any mismatch just shortens the matched prefix, which
-    // is still correct, only less optimal).
     if (!g_cached_tokens.empty()) {
         g_cached_tokens.insert(g_cached_tokens.end(), gen_tokens.begin(), gen_tokens.end());
     }
 
-    // Add assistant reply to history
     g_history.push_back({"assistant", response});
-
-    // Signal done via callback
     call_callback_on_done();
     LOGI("Inference complete. tokens=%d chars=%zu", tokens_generated, response.size());
-
-    // Release callback
     release_callback();
 }

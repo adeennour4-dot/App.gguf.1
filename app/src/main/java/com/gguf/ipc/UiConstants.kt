@@ -4,10 +4,8 @@ import androidx.compose.ui.graphics.Color
 
 /**
  * UiConstants — Shared UI values across all composables.
- * Colors, shapes, and common strings.
  */
 object UiConstants {
-    // Color palette - consistent across all screens
     object Pal {
         val Bg = Color(0xFF0A0A0F)
         val Surface = Color(0xFF141420)
