@@ -1,6 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Legacy colors - no longer used, colors are defined in Compose -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- App colors defined as resources for XML themes -->
+    <color name="bg_deep">#FF0A0A0F</color>
+    <color name="surface">#FF141420</color>
+    <color name="card">#FF1A1A2E</color>
+    <color name="card_light">#FF22223A</color>
+    <color name="border">#FF2A2A40</color>
+    <color name="accent">#FF6C63FF</color>
+    <color name="accent2">#FF00D9A6</color>
+    <color name="red">#FFFF4757</color>
+    <color name="amber">#FFFFBE0B</color>
+    <color name="purple">#FFBB86FC</color>
+    <color name="text">#FFEAEAEE</color>
+    <color name="text2">#FF9898AA</color>
+    <color name="text3">#FF5C5C72</color>
+    <color name="user_bg">#FF2D2B55</color>
+    <color name="think_bg">#FF1E1A33</color>
+    
+    <!-- Legacy colors - for compatibility -->
     <color name="purple_200">#BB86FC</color>
     <color name="purple_500">#6C63FF</color>
     <color name="purple_700">#3700B3</color>
@@ -8,4 +25,6 @@
     <color name="teal_700">#00BFA5</color>
     <color name="black">#0A0A0F</color>
     <color name="white">#FFFFFF</color>
+
+    <string name="app_name">GGUF ZeroCopy</string>
 </resources>
