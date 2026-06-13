@@ -204,22 +204,28 @@ Java_com_gguf_ipc_MnnEngine_mnnBenchmark(JNIEnv* env, jobject thiz, jint ppToken
         return env->NewStringUTF("{\"error\":\"Model not loaded\"}");
     }
 
-    const int tok = 16;
+    // Build a prompt sized to ppTokens words for prefill measurement
+    std::string pp_prompt;
+    for (int i = 0; i < ppTokens; ++i) pp_prompt += "word ";
 
-    std::vector<int> tokens(ppTokens, tok);
+    std::ostringstream oss1;
     auto start = std::chrono::high_resolution_clock::now();
-    g_llm->response(tokens, nullptr, nullptr, 1);
+    g_llm->response(pp_prompt, &oss1);
     auto end = std::chrono::high_resolution_clock::now();
     auto* ctx = g_llm->getContext();
-    float prefill_ms = ctx ? (float)ctx->prefill_us / 1000.0f : 0;
+    float prefill_ms = ctx ? (float)ctx->prefill_us / 1000.0f :
+        (float)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     float prefill_tps = (prefill_ms > 0) ? (float)ppTokens / (prefill_ms / 1000.0f) : 0;
 
-    std::vector<int> gen_tokens(1, tok);
+    // Short prompt for decode/TG measurement
+    std::string tg_prompt = "Hello";
+    std::ostringstream oss2;
     start = std::chrono::high_resolution_clock::now();
-    g_llm->response(gen_tokens, nullptr, nullptr, tgTokens);
+    g_llm->response(tg_prompt, &oss2);
     end = std::chrono::high_resolution_clock::now();
     ctx = g_llm->getContext();
-    float decode_ms = ctx ? (float)ctx->decode_us / 1000.0f : 0;
+    float decode_ms = ctx ? (float)ctx->decode_us / 1000.0f :
+        (float)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     float decode_tps = (decode_ms > 0) ? (float)tgTokens / (decode_ms / 1000.0f) : 0;
 
     std::string result = buildJson({
