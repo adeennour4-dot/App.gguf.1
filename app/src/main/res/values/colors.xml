@@ -25,6 +25,4 @@
     <color name="teal_700">#00BFA5</color>
     <color name="black">#0A0A0F</color>
     <color name="white">#FFFFFF</color>
-
-    <string name="app_name">GGUF ZeroCopy</string>
 </resources>
