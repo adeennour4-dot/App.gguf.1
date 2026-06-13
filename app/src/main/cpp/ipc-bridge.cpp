@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <sstream>
@@ -62,6 +63,11 @@ struct EngineConfig {
 
 struct Message { std::string role; std::string content; };
 static std::vector<Message> g_history;
+
+// Tokens currently represented (in order, contiguous positions 0..N-1) in
+// the KV cache, as of the last successful prompt decode. Used to avoid
+// re-prefilling the whole conversation on every turn.
+static std::vector<llama_token> g_cached_tokens;
 
 // Big core helpers
 static std::vector<int> detect_big_cores() {
@@ -314,6 +320,7 @@ Java_com_gguf_ipc_EngineCore_setSystemPromptNative(JNIEnv* env, jobject, jstring
 extern "C" JNIEXPORT void JNICALL
 Java_com_gguf_ipc_EngineCore_resetContextNative(JNIEnv*, jobject) {
     g_history.clear();
+    g_cached_tokens.clear();
     if (g_ctx) llama_memory_clear(get_mem(), true);
     LOGI("Context reset.");
 }
@@ -334,6 +341,7 @@ Java_com_gguf_ipc_EngineCore_loadGgufModelNative(JNIEnv* env, jobject, jstring p
     if (g_ctx)     { llama_free(g_ctx);              g_ctx     = nullptr; }
     if (g_model)   { llama_model_free(g_model);      g_model   = nullptr; }
     g_history.clear();
+    g_cached_tokens.clear();
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = g_cfg.n_gpu_layers;
@@ -535,30 +543,64 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
     }
     tokens.resize(n_toks);
 
-    // Context shift if near limit
+    // --- Prompt-cache reuse -------------------------------------------------
+    // Find how much of the new prompt (system + history + new message) is
+    // already sitting in the KV cache from previous turns, and only decode
+    // the new tail. Without this, every turn re-prefills the ENTIRE
+    // conversation from token 0 (and even duplicates it on top of the
+    // existing cache), making prefill cost grow with conversation length.
     llama_pos cur_max = llama_memory_seq_pos_max(get_mem(), 0);
-    int n_ctx_used = (cur_max >= 0) ? (int)(cur_max + 1) : 0;
+    int n_cached = (cur_max >= 0) ? (int)(cur_max + 1) : 0;
 
-    if (n_ctx_used + n_toks >= g_cfg.n_ctx) {
-        int keep     = g_cfg.n_ctx / 4;
-        int n_discard = (n_ctx_used - keep) / 2;
+    size_t common_prefix = 0;
+    size_t max_common = std::min(g_cached_tokens.size(), (size_t)n_toks);
+    while (common_prefix < max_common &&
+           g_cached_tokens[common_prefix] == tokens[common_prefix]) {
+        common_prefix++;
+    }
+
+    if (common_prefix < (size_t)n_cached) {
+        // Drop the divergent tail from the KV cache; it belongs to an
+        // earlier/different conversation state.
+        llama_memory_seq_rm(get_mem(), 0, (llama_pos)common_prefix, -1);
+        n_cached = (int)common_prefix;
+    }
+
+    int n_new = n_toks - (int)common_prefix;
+
+    // Context shift if the cached prefix + new tokens would overflow n_ctx
+    bool shifted = false;
+    if (n_cached + n_new >= g_cfg.n_ctx) {
+        int keep      = g_cfg.n_ctx / 4;
+        int n_discard = (n_cached - keep) / 2;
         if (n_discard > 0) {
             llama_memory_t mem = get_mem();
             llama_memory_seq_rm (mem, 0, keep, keep + n_discard);
             llama_memory_seq_add(mem, 0, keep + n_discard, -1, -n_discard);
             LOGI("KV-cache context shift applied. discarded=%d", n_discard);
+            shifted = true;
         }
     }
 
+    LOGI("Prompt tokens=%d, reused_from_cache=%zu, new=%d", n_toks, common_prefix, n_new);
+
     // Prompt evaluation — all cores for parallel processing
     pin_to_all_cores();
-    llama_batch batch = llama_batch_get_one(tokens.data(), n_toks);
-    if (llama_decode(g_ctx, batch) != 0) {
-        LOGE("llama_decode (prompt) failed");
-        call_callback_on_error("Prompt decode failed");
-        release_callback();
-        return;
+    if (n_new > 0) {
+        llama_batch batch = llama_batch_get_one(tokens.data() + common_prefix, n_new);
+        if (llama_decode(g_ctx, batch) != 0) {
+            LOGE("llama_decode (prompt) failed");
+            g_cached_tokens.clear();
+            call_callback_on_error("Prompt decode failed");
+            release_callback();
+            return;
+        }
     }
+
+    // Remember what's now in the KV cache for next turn's prefix match.
+    // After a context shift, positions no longer map 1:1 onto `tokens`,
+    // so fall back to full reprocessing on the next turn.
+    g_cached_tokens = shifted ? std::vector<llama_token>() : tokens;
 
     // Report KV cache usage after prompt eval
     {
@@ -572,6 +614,7 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
     pin_to_big_cores();
     std::string response;
     int tokens_generated = 0;
+    std::vector<llama_token> gen_tokens;
     for (int i = 0; i < g_cfg.max_new_tokens; i++) {
         if (g_abort.load()) { LOGI("Inference aborted at token %d", i); break; }
 
@@ -592,6 +635,7 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
 
         llama_batch nb = llama_batch_get_one(&tok, 1);
         if (llama_decode(g_ctx, nb) != 0) break;
+        gen_tokens.push_back(tok);
 
         // Report KV cache every 16 tokens
         if ((i & 0xF) == 0) {
@@ -600,6 +644,15 @@ Java_com_gguf_ipc_EngineCore_executeWithCallbackNative(JNIEnv* env, jobject thiz
             int pct = (g_cfg.n_ctx > 0) ? (int)((used * 100LL) / g_cfg.n_ctx) : 0;
             call_callback_on_kv_cache(pct);
         }
+    }
+
+    // Extend the prompt-cache record with the tokens we just generated,
+    // so next turn's prefix match also covers this assistant reply
+    // (re-tokenizing the chat-templated history typically reproduces the
+    // same token IDs; any mismatch just shortens the matched prefix, which
+    // is still correct, only less optimal).
+    if (!g_cached_tokens.empty()) {
+        g_cached_tokens.insert(g_cached_tokens.end(), gen_tokens.begin(), gen_tokens.end());
     }
 
     // Add assistant reply to history
