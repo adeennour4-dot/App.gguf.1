@@ -562,6 +562,7 @@ fun StreamingBubble(text: String, processing: Boolean = false) {
                     } else {
                         Text(text, color = Pal.Text, fontSize = 14.sp, lineHeight = 20.sp)
                     }
+                }
             }
         }
     }
