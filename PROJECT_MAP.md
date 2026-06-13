@@ -13,6 +13,7 @@
 | **Engine: llama.cpp** | ggml-org/llama.cpp | **b9474** (pinned) | ✅ |
 | | GGML_VULKAN | OFF (NDK lacks Vulkan headers) | ⚠️ |
 | | GGML_OPENCL | OFF | ✅ |
+| | GGML_CPU_KLEIDIAI | **ON** (ARM micro-kernels) | ✅ |
 | | ARM arch | armv8.6-a+dotprod+i8mm+fp16 | ✅ |
 | **Engine: MNN** | alibaba/MNN | **3.5.0** (pinned) | ✅ |
 | **Engine: LiteRT-LM** | com.google.ai.edge.litertlm | **latest.release** | ✅ |
@@ -103,11 +104,15 @@ LlamaCppEngine.setConfig() → EngineCore.Config → JNI → C++ EngineConfig
 - [x] CI compiles llama.cpp (b9474, CPU backend)
 - [x] CI compiles MNN (3.5.0, LLM engine ON)
 - [x] CI compiles LiteRT-LM reflection stub
-- [x] Polling delay 80ms→30ms
+- [x] Polling delay 80ms→30ms, then 25-50ms adaptive
 - [x] "Processing..." indicator during prompt eval
 - [x] n_batch 512→2048, n_threads = all cores
 - [x] Default n_ctx floor 2048
-- [x] Duplicate color palette removed
+- [x] Duplicate color palette removed (UiConstants)
+- [x] ARM architecture: armv8.6-a
+- [x] NDK version: r28c compatible
+- [x] LiteRT-LM graceful fallback (no crash without AAR)
+- [x] MNN engine improved with config setters
 - [ ] `loadModel()` succeeds for `.litertlm` with real model file
 - [ ] `loadModel()` succeeds for `.mnn` with real model directory
 - [ ] `loadModel()` succeeds for `.gguf` with real model file

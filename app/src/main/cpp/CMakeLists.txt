@@ -29,7 +29,7 @@ option(GGML_VULKAN "Enable Vulkan GPU backend" OFF)
 option(GGML_OPENCL "Enable OpenCL GPU backend" OFF)  # Disabled for CI - OpenCL not available at build time
 
 # CPU optimizations
-set(GGML_CPU_KLEIDIAI   OFF CACHE BOOL "" FORCE)  # KleidiAI ARM micro-kernels (disabled — b9474 kernel mismatch)
+set(GGML_CPU_KLEIDIAI   ON CACHE BOOL "" FORCE)  # KleidiAI ARM micro-kernels (enabled for better CPU performance)
 
 set(GGML_OPENMP        OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE     OFF CACHE BOOL "" FORCE)

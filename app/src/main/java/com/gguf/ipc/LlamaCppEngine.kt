@@ -81,10 +81,10 @@ class LlamaCppEngine : InferenceEngine {
             override fun onDone() {
                 inferenceDone.set(true)
             }
-    override fun onError(error: String) {
-        android.util.Log.e(Companion.TAG, "Inference error: $error")
-        inferenceDone.set(true)
-    }
+            override fun onError(error: String) {
+                android.util.Log.e(TAG, "Inference error: $error")
+                inferenceDone.set(true)
+            }
             override fun onKvCacheUsage(percent: Int) {
                 kvCacheUsage = percent
             }

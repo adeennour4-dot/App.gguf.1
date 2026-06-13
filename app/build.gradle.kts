@@ -6,7 +6,6 @@ plugins {
 android {
     namespace  = "com.gguf.ipc"
     compileSdk = 35
-    ndkVersion = "27.2.12479066"          // NDK r27c (stable)
 
     defaultConfig {
         applicationId = "com.gguf.ipc"
@@ -17,7 +16,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                // Performance flags: ThinLTO, ARMv8.6-a with NEON FP16 and dotprod, SVE2 for Exynos 2200+
+                // Performance flags: ThinLTO, ARMv8.6-a with NEON FP16 and dotprod
                 cppFlags("-std=c++17 -O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
                 cFlags  ("-O3 -flto=thin -march=armv8.6-a+dotprod+i8mm+fp16 -fno-stack-protector")
                 arguments(
